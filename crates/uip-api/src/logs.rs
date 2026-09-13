@@ -29,7 +29,9 @@ pub async fn get_logs(State(pool): State<PgPool>, Query(q): Query<LogsQuery>) ->
 
     let rows = sqlx::query(
         r#"SELECT l.id, l.timestamp, l.log_type_id, l.direction_id, l.rule_action_id,
-                  l.src_ip::text AS src_ip, l.dst_ip::text AS dst_ip,
+                  -- host() statt ::text: inet hängt sonst die /32 an, und der
+                  -- SSE-Stream sendet dieselbe Adresse ohne Maske.
+                  host(l.src_ip) AS src_ip, host(l.dst_ip) AS dst_ip,
                   l.src_port, l.dst_port, l.mac_address::text AS mac_address,
                   l.dns_query, l.dns_type, l.dns_answer, l.dhcp_event, l.wifi_event, l.raw_log,
                   r.name AS rule_name, r.descr AS rule_desc,
@@ -134,5 +136,18 @@ mod tests {
         let ids1: Vec<i64> = body["rows"].as_array().unwrap().iter().map(|r| r["id"].as_i64().unwrap()).collect();
         let ids2: Vec<i64> = body2["rows"].as_array().unwrap().iter().map(|r| r["id"].as_i64().unwrap()).collect();
         assert!(ids1.iter().all(|i| !ids2.contains(i)));
+    }
+
+    /// Der SSE-Stream sendet blanke Adressen; /api/logs muss dieselbe Schreibweise
+    /// liefern, sonst zeigt die Tabelle je nach Herkunft der Zeile eine andere.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn addresses_come_back_without_netmask(pool: sqlx::PgPool) {
+        seed(&pool, 1).await;
+        let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
+        let res = app.oneshot(Request::get("/api/logs?limit=1").body(Body::empty()).unwrap()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap(),
+        ).unwrap();
+        assert_eq!(body["rows"][0]["src_ip"].as_str(), Some("1.2.3.4"));
     }
 }
