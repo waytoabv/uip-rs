@@ -1974,6 +1974,8 @@ name = "uip"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
+ "sqlx",
  "tokio",
  "tracing",
  "tracing-subscriber",
