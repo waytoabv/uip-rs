@@ -34,9 +34,7 @@ pub fn parse_header(line: &str, now: DateTime<Utc>) -> Option<SyslogHeader<'_>> 
     let day: u32 = it.next()?.parse().ok()?;
     let rest = it.next()?;
 
-    let mut it = rest.splitn(2, ' ');
-    let time = it.next()?;
-    let rest = it.next()?;
+    let (time, rest) = rest.split_once(' ')?;
 
     let mut t = time.splitn(3, ':');
     let (h, m, s): (u32, u32, u32) = (

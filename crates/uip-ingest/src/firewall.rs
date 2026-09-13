@@ -94,13 +94,13 @@ pub fn parse_firewall(body: &str, ctx: &FirewallCtx) -> ParsedLog {
     // KEY=VALUE-Scanner. DESCR="…" trägt Spaces → gesondert.
     let mut rest = body;
     while let Some(eq) = rest.find('=') {
-        let key_start = rest[..eq].rfind(|c: char| c == ' ' || c == ']').map(|i| i + 1).unwrap_or(0);
+        let key_start = rest[..eq].rfind([' ', ']']).map(|i| i + 1).unwrap_or(0);
         let key = &rest[key_start..eq];
         let after = &rest[eq + 1..];
-        let (value, next): (&str, &str) = if after.starts_with('"') {
-            match after[1..].find('"') {
-                Some(end) => (&after[1..1 + end], &after[end + 2..]),
-                None => (&after[1..], ""),
+        let (value, next): (&str, &str) = if let Some(quoted) = after.strip_prefix('"') {
+            match quoted.find('"') {
+                Some(end) => (&quoted[..end], &quoted[end + 1..]),
+                None => (quoted, ""),
             }
         } else {
             match after.find(' ') {
