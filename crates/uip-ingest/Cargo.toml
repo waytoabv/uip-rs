@@ -1,0 +1,15 @@
+[package]
+name = "uip-ingest"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+uip-core = { path = "../uip-core" }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+ipnetwork = { workspace = true }
+mac_address = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
