@@ -1996,6 +1996,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "tokio-stream",
+ "tower",
  "tracing",
  "uip-core",
  "uip-ingest",
