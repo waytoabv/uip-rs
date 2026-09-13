@@ -1,1 +1,1 @@
-// modules follow
+pub mod syslog;
