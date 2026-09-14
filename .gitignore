@@ -3,4 +3,5 @@ node_modules/
 dist/
 .env
 *.mmdb
+!crates/uip-enrich/tests/data/*.mmdb
 .DS_Store
