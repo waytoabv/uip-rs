@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/uip-core", "crates/uip-ingest", "crates/uip-api", "crates/uip"]
+members = ["crates/uip-core", "crates/uip-ingest", "crates/uip-api", "crates/uip", "crates/uip-enrich"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,3 +21,8 @@ ipnetwork = "0.20"
 mac_address = "1"
 futures = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
+async-trait = "0.1"
+arc-swap = "1"
+maxminddb = "0.26"
+hickory-resolver = "0.25"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
