@@ -16,6 +16,11 @@ export interface LogRow {
   dhcp_event: string | null;
   wifi_event: string | null;
   raw_log: string | null;
+  geo_country: string | null;
+  geo_city: string | null;
+  asn_name: string | null;
+  rdns: string | null;
+  threat_score: number | null;
 }
 
 export async function fetchLogs(limit = 100): Promise<LogRow[]> {

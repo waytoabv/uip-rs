@@ -34,6 +34,9 @@ pub async fn get_logs(State(pool): State<PgPool>, Query(q): Query<LogsQuery>) ->
                   host(l.src_ip) AS src_ip, host(l.dst_ip) AS dst_ip,
                   l.src_port, l.dst_port, l.mac_address::text AS mac_address,
                   l.dns_query, l.dns_type, l.dns_answer, l.dhcp_event, l.wifi_event, l.raw_log,
+                  l.geo_country, l.geo_city, l.geo_lat::float8 AS geo_lat,
+                  l.geo_lon::float8 AS geo_lon, l.asn_number, l.asn_name,
+                  l.rdns, l.threat_score, l.threat_categories, l.abuse_is_tor,
                   r.name AS rule_name, r.descr AS rule_desc,
                   ii.name AS iface_in, io.name AS iface_out,
                   pr.name AS protocol, dn.name AS hostname
@@ -90,6 +93,16 @@ pub async fn get_logs(State(pool): State<PgPool>, Query(q): Query<LogsQuery>) ->
             "dhcp_event": r.get::<Option<String>, _>("dhcp_event"),
             "wifi_event": r.get::<Option<String>, _>("wifi_event"),
             "raw_log": r.get::<Option<String>, _>("raw_log"),
+            "geo_country": r.get::<Option<String>, _>("geo_country"),
+            "geo_city": r.get::<Option<String>, _>("geo_city"),
+            "geo_lat": r.get::<Option<f64>, _>("geo_lat"),
+            "geo_lon": r.get::<Option<f64>, _>("geo_lon"),
+            "asn_number": r.get::<Option<i32>, _>("asn_number"),
+            "asn_name": r.get::<Option<String>, _>("asn_name"),
+            "rdns": r.get::<Option<String>, _>("rdns"),
+            "threat_score": r.get::<Option<i32>, _>("threat_score"),
+            "threat_categories": r.get::<Option<Vec<String>>, _>("threat_categories"),
+            "abuse_is_tor": r.get::<Option<bool>, _>("abuse_is_tor"),
         }));
     }
     Json(json!({ "rows": out, "next_cursor": next_cursor }))
@@ -149,5 +162,24 @@ mod tests {
             &axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap(),
         ).unwrap();
         assert_eq!(body["rows"][0]["src_ip"].as_str(), Some("1.2.3.4"));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn enriched_columns_reach_the_client(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, src_ip, geo_country, asn_name, rdns, threat_score)
+             VALUES (NOW(), 1, '8.8.8.8', 'US', 'GOOGLE', 'dns.google.', 42)",
+        ).execute(&pool).await.unwrap();
+
+        let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
+        let res = app.oneshot(Request::get("/api/logs?limit=1").body(Body::empty()).unwrap()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap(),
+        ).unwrap();
+        let row = &body["rows"][0];
+        assert_eq!(row["geo_country"].as_str(), Some("US"));
+        assert_eq!(row["asn_name"].as_str(), Some("GOOGLE"));
+        assert_eq!(row["rdns"].as_str(), Some("dns.google."));
+        assert_eq!(row["threat_score"].as_i64(), Some(42));
     }
 }

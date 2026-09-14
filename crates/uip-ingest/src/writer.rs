@@ -63,6 +63,10 @@ async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row
     // System-Logs tragen raw immer (einzige Information); andere nur zur Diagnose nicht nötig → NULL spart Platz.
     let keep_raw = matches!(log_type, uip_core::types::LogType::System);
 
+    // Bewusst ohne geo_*/asn_*/rdns/threat_*: eine frisch geschriebene Zeile ist
+    // noch gar nicht angereichert (enrich_status = 0). Die Live-Tabelle zeigt
+    // sie hier leer und holt sie beim nächsten /api/logs-Reload nach — ehrlicher
+    // als ein Wert, den es zum Sendezeitpunkt noch nicht gab.
     let json = serde_json::json!({
         "timestamp": timestamp.to_rfc3339(),
         "log_type": log_type.as_str(),
