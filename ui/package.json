@@ -19,6 +19,8 @@
     "world-atlas": "^2.0.2"
   },
   "devDependencies": {
+    "@solidjs/testing-library": "^0.8.10",
+    "@testing-library/jest-dom": "^7.0.1",
     "@types/d3-geo": "^3.1.1",
     "@types/d3-sankey": "^0.12.5",
     "@types/d3-scale": "^4.0.9",
@@ -26,6 +28,7 @@
     "@types/node": "^24.13.3",
     "@types/topojson-client": "^3.1.5",
     "autoprefixer": "^10.6.0",
+    "jsdom": "^30.0.1",
     "postcss": "^8.5.28",
     "tailwindcss": "^3.4.19",
     "typescript": "~6.0.2",
