@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use crate::error::ApiError;
 use crate::filters::LogFilter;
 
 #[derive(Deserialize)]
@@ -68,7 +69,10 @@ fn push_column(nodes: &mut Vec<Value>, kind: &str, keys: &[String]) -> HashMap<S
 /// Verkehr als Fluss über drei Spalten: Quelladresse → Dienst (Port/Protokoll)
 /// → Zieladresse. Nur Firewall-Zeilen mit beiden Adressen zählen — eine
 /// DNS- oder DHCP-Zeile hat kein Ziel, das man sinnvoll einzeichnen könnte.
-pub async fn get_sankey(State(pool): State<PgPool>, Query(q): Query<SankeyQuery>) -> Json<Value> {
+pub async fn get_sankey(
+    State(pool): State<PgPool>,
+    Query(q): Query<SankeyQuery>,
+) -> Result<Json<Value>, ApiError> {
     let limit = q.limit.unwrap_or(12).clamp(1, 50) as usize;
 
     let mut qb = sqlx::QueryBuilder::new(
@@ -81,7 +85,7 @@ pub async fn get_sankey(State(pool): State<PgPool>, Query(q): Query<SankeyQuery>
     qb.push(" AND l.log_type_id = 1 AND l.src_ip IS NOT NULL AND l.dst_ip IS NOT NULL");
     qb.push(" GROUP BY l.src_ip, l.dst_ip, l.dst_port, pr.name");
 
-    let rows = qb.build().fetch_all(&pool).await.unwrap_or_default();
+    let rows = qb.build().fetch_all(&pool).await?;
 
     let data: Vec<FlowRow> = rows
         .iter()
@@ -147,13 +151,16 @@ pub async fn get_sankey(State(pool): State<PgPool>, Query(q): Query<SankeyQuery>
         }));
     }
 
-    Json(json!({ "nodes": nodes, "links": links }))
+    Ok(Json(json!({ "nodes": nodes, "links": links })))
 }
 
 /// Die Zonenmatrix: Schnittstelle zu Schnittstelle. Zählt nur Zeilen, die
 /// beide Schnittstellen kennen — eine Zeile mit nur einer bekannten Seite
 /// sagt nichts über ein Zonenpaar aus.
-pub async fn get_zones(State(pool): State<PgPool>, Query(f): Query<LogFilter>) -> Json<Value> {
+pub async fn get_zones(
+    State(pool): State<PgPool>,
+    Query(f): Query<LogFilter>,
+) -> Result<Json<Value>, ApiError> {
     let mut qb = sqlx::QueryBuilder::new(
         "SELECT ii.name AS iface_in, io.name AS iface_out,
                 COUNT(*) FILTER (WHERE l.rule_action_id = 1) AS allowed,
@@ -165,7 +172,7 @@ pub async fn get_zones(State(pool): State<PgPool>, Query(f): Query<LogFilter>) -
     qb.push(" AND l.iface_in_id IS NOT NULL AND l.iface_out_id IS NOT NULL");
     qb.push(" GROUP BY ii.name, io.name");
 
-    let rows = qb.build().fetch_all(&pool).await.unwrap_or_default();
+    let rows = qb.build().fetch_all(&pool).await?;
 
     let mut zones: BTreeSet<String> = BTreeSet::new();
     let mut cells = Vec::with_capacity(rows.len());
@@ -180,7 +187,7 @@ pub async fn get_zones(State(pool): State<PgPool>, Query(f): Query<LogFilter>) -
         cells.push(json!({ "from": from, "to": to, "allowed": allowed, "blocked": blocked }));
     }
 
-    Json(json!({ "zones": zones.into_iter().collect::<Vec<_>>(), "cells": cells }))
+    Ok(Json(json!({ "zones": zones.into_iter().collect::<Vec<_>>(), "cells": cells })))
 }
 
 #[cfg(test)]
@@ -372,5 +379,29 @@ mod tests {
         let cells = body["cells"].as_array().unwrap();
         assert_eq!(cells[0]["allowed"], 0);
         assert_eq!(cells[0]["blocked"], 1);
+    }
+
+    /// Eine tote Datenbank muss als Fehler ankommen, nicht als leerer Sankey.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn sankey_reports_a_dead_database_instead_of_hiding_it(pool: sqlx::PgPool) {
+        let app = crate::router(pool.clone(), tokio::sync::broadcast::channel(8).0);
+        pool.close().await;
+        let res = app
+            .oneshot(Request::get("/api/flows/sankey").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// Ebenso für die Zonenmatrix, nicht als leere Matrix.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn zones_reports_a_dead_database_instead_of_hiding_it(pool: sqlx::PgPool) {
+        let app = crate::router(pool.clone(), tokio::sync::broadcast::channel(8).0);
+        pool.close().await;
+        let res = app
+            .oneshot(Request::get("/api/flows/zones").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

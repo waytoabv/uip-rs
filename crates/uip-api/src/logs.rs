@@ -1,3 +1,4 @@
+use crate::error::ApiError;
 use crate::filters::LogFilter;
 use axum::extract::{Query, State};
 use axum::Json;
@@ -20,7 +21,10 @@ fn parse_cursor(s: &str) -> Option<(DateTime<Utc>, i64)> {
     Some((Utc.timestamp_micros(micros).single()?, id.parse().ok()?))
 }
 
-pub async fn get_logs(State(pool): State<PgPool>, Query(q): Query<LogsQuery>) -> Json<Value> {
+pub async fn get_logs(
+    State(pool): State<PgPool>,
+    Query(q): Query<LogsQuery>,
+) -> Result<Json<Value>, ApiError> {
     let limit = q.limit.unwrap_or(100).clamp(1, 1000);
     let cursor = q.before.as_deref().and_then(parse_cursor);
 
@@ -45,7 +49,7 @@ pub async fn get_logs(State(pool): State<PgPool>, Query(q): Query<LogsQuery>) ->
         qb.push(" AND (l.timestamp, l.id) < (").push_bind(ts).push(", ").push_bind(id).push(")");
     }
     qb.push(" ORDER BY l.timestamp DESC, l.id DESC LIMIT ").push_bind(limit);
-    let rows = qb.build().fetch_all(&pool).await.unwrap_or_default();
+    let rows = qb.build().fetch_all(&pool).await?;
 
     const LOG_TYPES: [&str; 5] = ["firewall", "dns", "dhcp", "wifi", "system"];
     const DIRECTIONS: [&str; 6] = ["inbound", "outbound", "local", "inter_vlan", "vpn", "nat"];
@@ -95,7 +99,7 @@ pub async fn get_logs(State(pool): State<PgPool>, Query(q): Query<LogsQuery>) ->
             "abuse_is_tor": r.get::<Option<bool>, _>("abuse_is_tor"),
         }));
     }
-    Json(json!({ "rows": out, "next_cursor": next_cursor }))
+    Ok(Json(json!({ "rows": out, "next_cursor": next_cursor })))
 }
 
 #[cfg(test)]
@@ -209,5 +213,18 @@ mod tests {
         assert_eq!(body["rows"].as_array().unwrap().len(), 4);
         let body = get_json(&app, "/api/logs?q=9.9.9.9").await;
         assert!(body["rows"].as_array().unwrap().is_empty());
+    }
+
+    /// Eine tote Datenbank muss als Fehler ankommen, nicht als leere Liste —
+    /// sonst sieht ein Ausfall genauso aus wie eine ruhige Nacht.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_dead_database_is_reported_not_hidden(pool: sqlx::PgPool) {
+        let app = crate::router(pool.clone(), tokio::sync::broadcast::channel(8).0);
+        pool.close().await;
+        let res = app
+            .oneshot(Request::get("/api/logs").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }
