@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, For, onCleanup } from 'solid-js';
+import { countryLabel, countryName } from './country';
 
 interface Stats {
   total: number;
@@ -84,6 +85,12 @@ function filterFor(dim: Dimension, row: TopRow): Record<string, string> {
   }
 }
 
+/** Was in der Zeile steht. Länder tragen ihren Code nur noch im Tooltip —
+ * der Name sagt mehr, und gefiltert wird ohnehin über `row.key`. */
+function rowLabel(dim: Dimension, row: TopRow): string {
+  return dim === 'countries' ? countryLabel(row.key) : row.label;
+}
+
 /** Kleine Zusatzinfo unter dem Zeilennamen — je Dimension etwas anderes. */
 function subline(dim: Dimension, row: TopRow): string {
   const extra = row.extra ?? {};
@@ -109,7 +116,7 @@ function subline(dim: Dimension, row: TopRow): string {
       const country = extra['country'];
       const parts: string[] = [];
       if (typeof score === 'number') parts.push(`Score ${score}`);
-      if (typeof country === 'string') parts.push(country);
+      if (typeof country === 'string') parts.push(countryName(country));
       return parts.join(' · ');
     }
   }
@@ -315,10 +322,10 @@ export default function Dashboard(props: { query: string; onFilter: (patch: Reco
                 {rows().length === 0 && <div class="top-empty">Keine Daten</div>}
                 <For each={rows()}>
                   {(row) => (
-                    <button class="top-row" onClick={() => props.onFilter(filterFor(dim.id, row))} title={row.label}>
+                    <button class="top-row" onClick={() => props.onFilter(filterFor(dim.id, row))} title={`${row.label} (${row.key})`}>
                       <div class="bar-wrap">
                         <div class="bar-label">
-                          <span class="name">{row.label}</span>
+                          <span class="name">{rowLabel(dim.id, row)}</span>
                           <span>{row.count.toLocaleString()}</span>
                         </div>
                         <div class="bar-track">

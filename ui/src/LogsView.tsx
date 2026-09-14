@@ -1,5 +1,6 @@
 import { createEffect, createSignal, For, onCleanup } from 'solid-js';
 import { fetchLogs, type LogRow } from './api';
+import { countryName } from './country';
 
 const MAX_ROWS = 500;
 
@@ -72,8 +73,8 @@ export default function LogsView(props: { query: string }) {
                   {r.dst_port != null ? `:${r.dst_port}` : ''}
                 </td>
                 <td>{r.protocol}</td>
-                <td>
-                  {r.geo_country}
+                <td title={r.geo_country ?? ''}>
+                  {countryName(r.geo_country)}
                   {r.geo_city ? ` / ${r.geo_city}` : ''}
                 </td>
                 <td>{r.threat_score != null ? r.threat_score : ''}</td>

@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Show } from 'solid-js';
+import { countryName } from './country';
 import { geoNaturalEarth1, geoPath } from 'd3-geo';
 import { scaleLinear, scaleSqrt } from 'd3-scale';
 import { feature } from 'topojson-client';
@@ -94,7 +95,8 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
   );
 
   const tooltip = (p: ThreatPoint) => {
-    const where = p.city ? `${p.city}, ${p.country ?? '?'}` : (p.country ?? 'unbekannt');
+    const land = countryName(p.country) || 'unbekannt';
+    const where = p.city ? `${p.city}, ${land}` : land;
     const lines = [where, `${p.count} blockiert`];
     if (p.max_threat != null) lines.push(`höchster Threat-Score: ${p.max_threat}`);
     if (p.sample_ip) lines.push(`z.B. ${p.sample_ip}`);
