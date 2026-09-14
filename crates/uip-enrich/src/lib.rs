@@ -1,4 +1,5 @@
 pub mod geoip;
+pub mod rdns;
 pub mod target;
 pub mod types;
 pub mod worker;
