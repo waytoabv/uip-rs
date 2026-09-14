@@ -146,6 +146,18 @@ mod tests {
         assert!(f.geo_lat.is_some() && f.geo_lon.is_some());
     }
 
+    /// Stadt und AS kommen aus zwei getrennten Dateien, und eine Adresse kann
+    /// in der einen stehen und in der anderen fehlen — 2.125.160.216 etwa hat
+    /// in den Testdaten eine Stadt, aber kein AS. Ohne eigenen Test bliebe der
+    /// ASN-Zweig deshalb unbemerkt tot.
+    #[test]
+    fn reads_the_autonomous_system_from_its_own_database() {
+        let Some(geo) = test_dbs() else { eprintln!("skipped: no test mmdb"); return };
+        let f = geo.lookup("1.128.0.1".parse().unwrap());
+        assert_eq!(f.asn_number, Some(1221));
+        assert_eq!(f.asn_name.as_deref(), Some("Telstra Pty Ltd"));
+    }
+
     #[test]
     fn unknown_addresses_yield_nothing_rather_than_an_error() {
         let Some(geo) = test_dbs() else { eprintln!("skipped: no test mmdb"); return };
