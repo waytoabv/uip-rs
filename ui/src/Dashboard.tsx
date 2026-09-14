@@ -17,6 +17,7 @@ interface Stats {
   blocked: number;
   allowed: number;
   by_type: Record<string, number>;
+  by_direction: Record<string, number>;
   unique_sources: number;
   threats: number;
 }
@@ -58,7 +59,16 @@ const DIMENSIONS: { id: Dimension; title: string }[] = [
   { id: 'threats', title: 'Threat IPs' },
 ];
 
-const EMPTY_STATS: Stats = { total: 0, blocked: 0, allowed: 0, by_type: {}, unique_sources: 0, threats: 0 };
+// Werte aus dem Fork (ui/src/utils.js): Zeichen und Farbe je Richtung.
+const DIRECTION_ICONS: Record<string, string> = {
+  inbound: '↓', outbound: '↑', inter_vlan: '⇔', nat: '⤴', local: '⟳', vpn: '⛨',
+};
+const DIRECTION_COLORS: Record<string, string> = {
+  inbound: 'text-red-400', outbound: 'text-blue-400', inter_vlan: 'text-gray-300',
+  nat: 'text-yellow-400', local: 'text-gray-400', vpn: 'text-teal-400',
+};
+
+const EMPTY_STATS: Stats = { total: 0, blocked: 0, allowed: 0, by_type: {}, by_direction: {}, unique_sources: 0, threats: 0 };
 
 function buildUrl(path: string, query: string, extra?: Record<string, string>): string {
   const params = new URLSearchParams(query);
@@ -173,13 +183,15 @@ export default function Dashboard(props: { query: string; onFilter: (patch: Reco
   const points = createMemo(() => series().points ?? []);
   const byTypeEntries = createMemo(() => sortLogTypeEntries(Object.entries(stats().by_type ?? {})));
 
+  // Richtungen absteigend nach Menge — die Vorlage zeigt die stärkste zuerst.
+  const byDirectionEntries = createMemo(() =>
+    Object.entries(stats().by_direction ?? {}).sort((a, b) => b[1] - a[1]),
+  );
+
   return (
     <div class="flex flex-col gap-4">
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {/* Traffic Overview: Gesamtzahl, Aktions-Pillen. Eine Zeile mit
-            Richtungs-Pillen (↑ OUTBOUND, ⇔ VLAN, …) fehlt bewusst: weder
-            `/api/stats` noch `/api/stats/top` kennen eine Richtungs-
-            Aufschlüsselung — die Zahlen dafür gäbe es nur erfunden. */}
+        {/* Traffic Overview: Gesamtzahl, Aktions-Pillen, Richtungs-Pillen. */}
         <div class={CARD}>
           <div class={`${CARD_TITLE} mb-3`}>Traffic Overview</div>
           <div class="flex items-baseline gap-2 mb-3">
@@ -191,6 +203,27 @@ export default function Dashboard(props: { query: string; onFilter: (patch: Reco
             <span class={`${PILL} ${BLOCKED_PILL_CLASS}`}>Blocked {formatNumber(stats().blocked)}</span>
             <span class={`${PILL} ${THREATS_PILL_CLASS}`}>Threats {formatNumber(stats().threats)}</span>
           </div>
+          <Show when={byDirectionEntries().length > 0}>
+            <div class="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[var(--border)] pt-3">
+              <For each={byDirectionEntries()}>
+                {([dir, n]) => (
+                  <button
+                    type="button"
+                    onClick={() => props.onFilter({ direction: dir })}
+                    class={`${PILL} border-transparent bg-[var(--surface)] hover:bg-[var(--surface-hover)]`}
+                  >
+                    <span class={DIRECTION_COLORS[dir] ?? 'text-gray-400'}>
+                      {DIRECTION_ICONS[dir] ?? ''}
+                    </span>{' '}
+                    <span class="uppercase text-[var(--muted)]">
+                      {dir === 'inter_vlan' ? 'vlan' : dir}
+                    </span>{' '}
+                    <span class="text-[var(--fg)]">{formatNumber(n)}</span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
         </div>
 
         <div class={CARD}>

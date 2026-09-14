@@ -259,3 +259,27 @@ export function localSide(
   if (isPrivateIp(dstIp)) return 'dst';
   return 'src';
 }
+
+/**
+ * Die lesbare Nutzlast einer Rohzeile.
+ *
+ * System-Zeilen tragen ihre ganze Information im Rohtext — sie werden
+ * absichtlich unzerlegt gespeichert, damit nichts verlorengeht. In der
+ * Tabelle blieben sie dadurch komplett leer. Angezeigt wird der Teil hinter
+ * dem RFC3164-Kopf: Priorität, Zeitstempel und Hostname stehen bereits in
+ * eigenen Spalten oder wiederholen sich in jeder Zeile.
+ */
+export function rawMessage(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  // <45>Sep 14 22:17:06 host host prog[123]: text  →  prog[123]: text
+  let rest = raw.replace(/^<\d+>/, '');
+  const stamp = rest.match(/^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+/);
+  if (!stamp) return raw.trim() || null;
+  rest = rest.slice(stamp[0].length);
+
+  const [host, ...tail] = rest.split(/\s+/);
+  // Manche Absender wiederholen den Hostnamen ("Express-7 Express-7 …") —
+  // nur dann fällt der zweite weg, sonst wäre schon der Programmname dran.
+  if (tail[0] === host) tail.shift();
+  return tail.join(' ').trim() || null;
+}

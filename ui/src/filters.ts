@@ -193,13 +193,17 @@ const FIELD_LABELS: Record<keyof FilterState, string> = {
 
 // Fields whose "all selected" state (empty string) means no chip should
 // show — the pill rows already make that visible.
-const MULTI_FIELDS = new Set<keyof FilterState>(['log_type', 'action', 'direction']);
+// Nur der Log-Typ bekommt keinen Chip: seine Pillen zeigen ihren Zustand
+// selbst, und ein Chip daneben wäre dieselbe Aussage zweimal. Aktion und
+// Richtung dagegen erscheinen als Chip — so hält es der Fork auch, und ohne
+// sie behauptete die Zeile "No filters", während gefiltert wird.
+const NO_CHIP_FIELDS = new Set<keyof FilterState>(['log_type']);
 
 // Liefert je einen Chip für jeden aktiven Filter — zum Anzeigen und, über
 // den `key`, zum gezielten Löschen genau dieses einen Filters.
 export function describe(state: FilterState): Chip[] {
   return (Object.keys(state) as (keyof FilterState)[])
-    .filter((key) => !MULTI_FIELDS.has(key) && state[key].trim() !== '')
+    .filter((key) => !NO_CHIP_FIELDS.has(key) && state[key].trim() !== '')
     .map((key) => {
       const raw = state[key];
       const value = key === 'range' ? (RANGE_LABELS[raw] ?? raw) : raw;

@@ -11,6 +11,7 @@ import {
   logTypePillClass,
   networkPath,
   normalizeRuleDesc,
+  rawMessage,
   serviceName,
   threatDotClass,
 } from './LogHelpers';
@@ -85,7 +86,7 @@ function infoFor(row: LogEntry): string {
   if (row.log_type === 'firewall') {
     return normalizeRuleDesc(row.rule_desc) ?? row.rule_name ?? '—';
   }
-  return row.dns_query ?? row.hostname ?? row.wifi_event ?? row.dhcp_event ?? '—';
+  return row.dns_query ?? row.hostname ?? row.wifi_event ?? row.dhcp_event ?? rawMessage(row.raw_log) ?? '—';
 }
 
 /** Gerätename (eigene Seite) bzw. rDNS (Gegenseite) — siehe `localSide` in LogHelpers. */
@@ -194,6 +195,7 @@ export default function LogsView(props: { query: string }) {
   const [suspended, setSuspended] = createSignal(false);
   const [lastUpdate, setLastUpdate] = createSignal<Date | null>(null);
   const [expandedId, setExpandedId] = createSignal<number | null>(null);
+  const [total, setTotal] = createSignal<{ total: number; exact: boolean } | null>(null);
 
   // Cursor-Stack für Zurück-Blättern: Index 0 ist die erste Seite (kein
   // `before`), jeder weitere Eintrag ist der Cursor, mit dem diese Seite
@@ -203,6 +205,16 @@ export default function LogsView(props: { query: string }) {
 
   const atFirstPage = () => beforeStack().length === 1;
   const pageNumber = () => beforeStack().length;
+
+  /** Die Gesamtzahl für die Fußzeile — eigener Aufruf, damit das Blättern
+   *  nicht darauf wartet. */
+  function loadTotal(query: string) {
+    setTotal(null);
+    fetch(`/api/logs/count${query ? `?${query}` : ''}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => setTotal(b ? { total: b.total, exact: b.exact } : null))
+      .catch(() => setTotal(null));
+  }
 
   function loadPage(query: string, before: string | undefined) {
     setLoading(true);
@@ -227,6 +239,7 @@ export default function LogsView(props: { query: string }) {
     setSuspended(false);
     setExpandedId(null);
     setBeforeStack([undefined]);
+    loadTotal(q);
     loadPage(q, undefined);
 
     const es = new EventSource(`/api/stream${q ? `?${q}` : ''}`);
@@ -277,10 +290,10 @@ export default function LogsView(props: { query: string }) {
             }`}
           >
             <span class={`w-1.5 h-1.5 rounded-full ${isLive() ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-            {paused() ? 'Fortsetzen' : isLive() ? 'Live' : 'Pausiert'}
+            {paused() ? 'Resume' : isLive() ? 'Live' : 'Paused'}
           </button>
           <Show when={lastUpdate()}>
-            <span class="text-[10px] text-gray-500">Aktualisiert {lastUpdate()!.toLocaleTimeString('en-GB')}</span>
+            <span class="text-[10px] text-gray-500">Updated {lastUpdate()!.toLocaleTimeString('en-GB')}</span>
           </Show>
         </div>
       </div>
@@ -330,7 +343,7 @@ export default function LogsView(props: { query: string }) {
                 fallback={
                   <tr>
                     <td colSpan={COLUMN_COUNT} class="text-center py-10 text-gray-500 text-sm">
-                      Keine Logs für diesen Filter. Größeren Zeitraum versuchen oder Filter zurücksetzen.
+                      No logs match this filter. Try a wider time range or reset the filters.
                     </td>
                   </tr>
                 }
@@ -408,7 +421,13 @@ export default function LogsView(props: { query: string }) {
 
       {/* Fußzeile */}
       <div class="flex items-center justify-between px-3 py-2 border-t border-gray-800 text-[11px] text-gray-400">
-        <span>{rows().length === 0 ? 'Keine Ergebnisse' : `${start()}–${end()} von …`}</span>
+        <span>
+          {rows().length === 0
+            ? 'No results'
+            : `${start()}–${end()} of ${
+                total() ? `${total()!.exact ? '' : '~'}${total()!.total.toLocaleString('en-GB')}` : '…'
+              }`}
+        </span>
         <div class="flex items-center gap-1">
           <button
             disabled={atFirstPage()}
@@ -417,7 +436,7 @@ export default function LogsView(props: { query: string }) {
           >
             «
           </button>
-          <span class="px-2 text-gray-300">Seite {pageNumber()}</span>
+          <span class="px-2 text-gray-300">Page {pageNumber()}</span>
           <button
             disabled={!nextCursor()}
             onClick={goNext}

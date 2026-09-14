@@ -117,3 +117,21 @@ suite('describe', () => {
     expect(chips.map((c) => c.key).sort()).toEqual(['asn', 'ip']);
   });
 });
+
+suite('describe — welche Filter einen Chip bekommen', () => {
+  it('zeigt Aktion und Richtung, sonst behauptet die Zeile "No filters" während gefiltert wird', () => {
+    const chips = describe({ ...emptyFilters(), action: 'block', direction: 'inbound' });
+    const labels = chips.map((c: { label: string }) => c.label);
+    expect(labels.some((l) => l.startsWith('Action:'))).toBe(true);
+    expect(labels.some((l) => l.startsWith('Direction:'))).toBe(true);
+  });
+
+  it('lässt den Log-Typ weg — seine Pillen zeigen ihren Zustand selbst', () => {
+    const chips = describe({ ...emptyFilters(), log_type: 'firewall' });
+    expect(chips.map((c: { label: string }) => c.label).some((l) => l.startsWith('Type:'))).toBe(false);
+  });
+
+  it('gibt für einen leeren Filter gar nichts zurück', () => {
+    expect(describe(emptyFilters())).toEqual([]);
+  });
+});

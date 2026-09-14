@@ -39,9 +39,9 @@ const PANELS: { key: PanelKey; label: string }[] = [
 // Türkis, Dienst Violett, Ziel Grün), hier direkt über `kind` statt über die
 // x-Position bestimmt, weil unser Sankey immer genau diese drei Spalten hat.
 const KIND_STYLE: Record<NodeDatum['kind'], { node: string; link: string; label: string }> = {
-  source: { node: '#14b8a6', link: 'rgba(20,184,166,0.5)', label: 'Quelle' },
-  service: { node: '#a855f7', link: 'rgba(168,85,247,0.5)', label: 'Dienst' },
-  destination: { node: '#22c55e', link: 'rgba(34,197,94,0.5)', label: 'Ziel' },
+  source: { node: '#14b8a6', link: 'rgba(20,184,166,0.5)', label: 'Source' },
+  service: { node: '#a855f7', link: 'rgba(168,85,247,0.5)', label: 'Service' },
+  destination: { node: '#22c55e', link: 'rgba(34,197,94,0.5)', label: 'Destination' },
 };
 const OTHER_STYLE = { node: '#6b7280', link: 'rgba(107,114,128,0.35)' };
 
@@ -201,7 +201,7 @@ const FlowView: Component<Props> = (props) => {
           </div>
           <div class="overflow-x-auto p-3">
             {sankeyData().nodes.length === 0 ? (
-              <p class="py-10 text-center text-sm text-gray-500">Keine Flussdaten für die aktuelle Auswahl.</p>
+              <p class="py-10 text-center text-sm text-gray-500">No flow data for the current selection.</p>
             ) : (
               <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} class="h-auto w-full min-w-[32rem]" style={{ overflow: 'visible' }}>
                 {/* Spaltenüberschriften */}
@@ -310,7 +310,7 @@ const FlowView: Component<Props> = (props) => {
           </div>
           <div class="overflow-auto p-4">
             {zonesData().zones.length === 0 ? (
-              <p class="py-10 text-center text-sm text-gray-500">Kein Zonenverkehr für die aktuelle Auswahl.</p>
+              <p class="py-10 text-center text-sm text-gray-500">No zone traffic for the current selection.</p>
             ) : (
               <table class="border-separate text-[11px]" style={{ 'border-spacing': '3px' }}>
                 <tbody>

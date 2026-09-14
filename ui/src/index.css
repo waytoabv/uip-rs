@@ -7,7 +7,9 @@
    Hell gibt es weiterhin über [data-theme="light"]. */
 :root {
   color-scheme: dark;
-  font: 16px/1.4 ui-monospace, Consolas, monospace;
+  /* Sans wie in der Vorlage. Die erste Fassung war durchgehend Monospace —
+     das war der auffälligste Unterschied überhaupt. */
+  font: 16px/1.4 'UI Sans', Inter, system-ui, -apple-system, sans-serif;
 
   --bg: #000000;
   --fg: #e5e7eb;

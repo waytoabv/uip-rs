@@ -94,7 +94,13 @@ const ChartAxes: Component<
       {/* x-Achse: Datum unter ein paar gleichmäßig verteilten Punkten. */}
       <For each={xTickIdx()}>
         {(i) => (
-          <text x={x()(i)} y={props.height - 4} font-size="9" fill="var(--muted)" text-anchor="middle">
+          <text
+            x={x()(i)}
+            y={props.height - 4}
+            font-size="9"
+            fill="var(--muted)"
+            text-anchor={i === 0 ? 'start' : i === props.points.length - 1 ? 'end' : 'middle'}
+          >
             {formatTick(props.points[i].t, props.bucket)}
           </text>
         )}

@@ -138,8 +138,8 @@ describe('LogsView', () => {
     stubFetch(EMPTY_ROUTES);
     stubEventSource();
     const { container, findByText } = render(() => <LogsView query="" />);
-    await findByText(/Keine Logs für diesen Filter/);
-    expect(container).toHaveTextContent('Keine Logs für diesen Filter');
+    await findByText(/No logs match this filter/);
+    expect(container).toHaveTextContent('No logs match this filter');
   });
 
   it('renders one row of real data', async () => {
@@ -176,7 +176,7 @@ describe('ThreatMap', () => {
   it('renders the empty state without throwing', async () => {
     stubFetch(EMPTY_ROUTES);
     const { findByText } = render(() => <ThreatMap query="" onFilter={noopFilter} />);
-    await findByText(/Kein blockierter Verkehr/);
+    await findByText(/No blocked traffic/);
   });
 
   it('renders one point of real data', async () => {
@@ -186,7 +186,7 @@ describe('ThreatMap', () => {
     ));
     // Der Zähler in der Kopfzeile sagt, dass der Punkt angekommen ist; im
     // Heatmap-Modus wird er als Dichtefläche gezeichnet, nicht als Kreis.
-    await findByText(/1\s*Orte/);
+    await findByText(/1\s*locations/);
     // Im Cluster-Modus wird derselbe Punkt zum Kreis — das prüft beide Wege.
     getByText('Cluster').click();
     await waitFor(() => expect(container.querySelectorAll('circle').length).toBeGreaterThan(0));
@@ -200,11 +200,11 @@ describe('FlowView', () => {
     // This is the case that used to crash: computeLayout ran on an empty
     // graph the instant the component mounted, before this placeholder text
     // had any data-free path to fall back to.
-    await findByText('Keine Flussdaten für die aktuelle Auswahl.');
+    await findByText('No flow data for the current selection.');
     // Die Zonenmatrix liegt hinter einem eigenen Reiter und ist deshalb erst
     // nach dem Wechsel im DOM.
     (await findByText('Zone Matrix')).click();
-    await findByText('Kein Zonenverkehr für die aktuelle Auswahl.');
+    await findByText('No zone traffic for the current selection.');
   });
 
   it('renders a two-node sankey of real data', async () => {

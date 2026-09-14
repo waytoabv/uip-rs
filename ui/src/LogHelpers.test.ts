@@ -13,6 +13,7 @@ import {
   normalizeRuleDesc,
   serviceName,
   threatDotClass,
+  rawMessage,
 } from './LogHelpers';
 
 describe('directionGlyph', () => {
@@ -184,5 +185,29 @@ describe('logTypePillClass / actionPillClass', () => {
   it('wirft nicht bei Unbekanntem oder Fehlendem', () => {
     expect(() => logTypePillClass(null)).not.toThrow();
     expect(() => actionPillClass(undefined)).not.toThrow();
+  });
+});
+
+describe('rawMessage', () => {
+  it('schneidet den Syslog-Kopf ab, der in jeder Zeile gleich ist', () => {
+    expect(
+      rawMessage("<45>Sep 14 22:17:06 Express-7 Express-7 syslog-ng[2612919]: shutting down"),
+    ).toBe('syslog-ng[2612919]: shutting down');
+  });
+
+  it('kommt auch ohne Prioritätspräfix und ohne zweiten Hostnamen zurecht', () => {
+    expect(rawMessage('Feb  8 16:43:49 UDR kernel: something happened')).toBe(
+      'kernel: something happened',
+    );
+  });
+
+  it('lässt Unbekanntes stehen, statt es zu verschlucken', () => {
+    expect(rawMessage('totaler muell ohne header')).toBe('totaler muell ohne header');
+  });
+
+  it('gibt für nichts auch nichts zurück', () => {
+    expect(rawMessage(null)).toBeNull();
+    expect(rawMessage('')).toBeNull();
+    expect(rawMessage('   ')).toBeNull();
   });
 });

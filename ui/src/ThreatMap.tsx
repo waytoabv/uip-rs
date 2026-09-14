@@ -146,7 +146,7 @@ function LogDetail(props: { log: LogRow; onBack: () => void }) {
           label="Aktion"
           value={<span class={ACTION_TEXT[log().rule_action ?? ''] ?? 'text-gray-500'}>{log().rule_action ?? '—'}</span>}
         />
-        <Row label="Richtung" value={log().direction} />
+        <Row label="Direction" value={log().direction} />
       </div>
       <Section title="Quelle">
         <Row label="IP-Adresse" value={log().src_ip} />
@@ -322,7 +322,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
             <span class="text-blue-400">Lädt…</span>
           </Show>
           <Show when={loaded()}>
-            <span>{points().length.toLocaleString()} Orte</span>
+            <span>{points().length.toLocaleString()} locations</span>
             <span class="text-gray-700">|</span>
             <span>{totalEvents().toLocaleString()} Ereignisse</span>
           </Show>
@@ -389,7 +389,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                 <div class="text-sm font-medium text-gray-300">Keine Geodaten</div>
                 <div class="mt-1 text-xs text-gray-500">
                   {blockedTotal() === 0
-                    ? 'Kein blockierter Verkehr in diesem Zeitfenster/Filter — die Karte hat schlicht nichts zu zeigen.'
+                    ? 'No blocked traffic in this window — the map simply has nothing to show.'
                     : `${blockedTotal().toLocaleString()} blockierte Zeile${blockedTotal() === 1 ? '' : 'n'} in diesem Filter, aber keine ` +
                       'davon ist geografisch angereichert: entweder fehlen die GeoIP-Datenbanken, oder die Anreicherung läuft noch.'}
                 </div>
