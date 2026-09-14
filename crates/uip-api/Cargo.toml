@@ -1,0 +1,22 @@
+[package]
+name = "uip-api"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+uip-core = { path = "../uip-core" }
+uip-ingest = { path = "../uip-ingest" }
+axum = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+futures = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+rust-embed = "8"
+mime_guess = "2"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

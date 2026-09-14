@@ -9,6 +9,18 @@ real-time syslog analysis for UniFi gateways, rebuilt from scratch:
 - **SolidJS** frontend — fine-grained reactivity for the live log stream, no VDOM diffing
 - **Proxmox LXC** deployment — classic community install script, systemd. No Docker.
 
+## Build
+
+The frontend is built first, then embedded into the `uip` binary via `rust-embed`
+(`crates/uip-api/src/static_files.rs` embeds `ui/dist/`). Building the Rust binary
+without a prior frontend build will embed a stale or missing `ui/dist/`, so the
+order matters:
+
+```bash
+cd ui && npm ci && npm run build
+cd .. && cargo build --release
+```
+
 ## Status
 
 Early development. See [design doc](docs/superpowers/specs/2026-09-13-uip-rs-rewrite-design.md)
