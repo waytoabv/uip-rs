@@ -62,7 +62,7 @@ export default function App() {
   const toggleTheme = () => setTheme(effectiveTheme() === 'dark' ? 'light' : 'dark');
 
   return (
-    <div class="flex h-dvh flex-col bg-gray-950">
+    <div class="flex h-dvh flex-col bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-200">
       <ShellHeader tabs={TABS} activeView={view()} onSelectView={setView} theme={effectiveTheme()} onToggleTheme={toggleTheme} />
       <FilterBar filters={filters()} onChange={setFilters} />
       <main class="flex-1 overflow-auto">
