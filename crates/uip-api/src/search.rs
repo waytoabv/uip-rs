@@ -39,6 +39,9 @@ pub enum Value {
     Ip(IpAddr),
     Cidr(IpNetwork),
     Port(i32),
+    /// Eine AS-Nummer. Eigener Fall, weil sie sonst als Port gelesen würde —
+    /// die meisten AS-Nummern liegen im Portbereich.
+    Asn(i32),
     Mac(String),
     Text(String),
 }
@@ -111,8 +114,62 @@ fn classify(token: String) -> Option<Term> {
     }
 
     let glob = token.contains('*');
-    let value = typed(&token);
+    let value = typed_for(&token, field);
     Some(Term { value, field, negated, glob })
+}
+
+/// Erkennt den Typ eines Werts — aber nur so weit, wie das Feld es zulässt.
+///
+/// Ohne diese Einschränkung entscheidet allein der Inhalt, und dann wird
+/// `asn:15169` zur Portsuche und `rule:443` ebenfalls: beides sind Zahlen im
+/// Portbereich. Sagt jemand ausdrücklich, welches Feld gemeint ist, hat das
+/// Vorrang vor dem Raten.
+fn typed_for(token: &str, field: Option<Field>) -> Value {
+    match field {
+        // Diese Felder tragen immer Text, egal wie der Wert aussieht.
+        Some(
+            Field::Rule
+            | Field::Host
+            | Field::Country
+            | Field::Protocol
+            | Field::Interface
+            | Field::Action
+            | Field::LogType,
+        ) => Value::Text(token.to_string()),
+
+        // Eine Zahl ist die AS-Nummer, alles andere der Name des Betreibers.
+        Some(Field::Asn) => match token.parse::<i32>() {
+            Ok(n) if n > 0 => Value::Asn(n),
+            _ => Value::Text(token.to_string()),
+        },
+
+        // Portfelder nehmen nur Zahlen; alles andere trifft nichts.
+        Some(Field::Port | Field::SrcPort | Field::DstPort) => match token.parse::<i32>() {
+            Ok(p) if (1..=65535).contains(&p) => Value::Port(p),
+            _ => Value::Text(token.to_string()),
+        },
+
+        // Adressfelder nehmen Adressen und Netze. Die Adresse wird zuerst
+        // geprüft: "10.0.0.5" parst auch als Netz (/32), und daraus würde ein
+        // Präfixvergleich statt der exakten, indizierten Gleichheit.
+        Some(Field::SrcIp | Field::DstIp | Field::AnyIp) => {
+            if let Ok(ip) = token.parse::<IpAddr>() {
+                Value::Ip(ip)
+            } else if token.contains('/') {
+                match token.parse::<IpNetwork>() {
+                    Ok(net) => Value::Cidr(net),
+                    Err(_) => Value::Text(token.to_string()),
+                }
+            } else if let Some(net) = prefix_to_network(token) {
+                Value::Cidr(net)
+            } else {
+                Value::Text(token.to_string())
+            }
+        }
+
+        // Ohne Feldangabe entscheidet der Inhalt.
+        None => typed(token),
+    }
 }
 
 fn typed(token: &str) -> Value {
@@ -266,6 +323,43 @@ mod tests {
         let t = one("nas*");
         assert_eq!(t.value, Value::Text("nas*".into()));
         assert!(t.glob);
+    }
+
+
+    /// Gefunden beim Bau der Filterleiste: `typed()` entschied allein nach
+    /// dem Inhalt, also wurde eine AS-Nummer zur Portsuche — und `rule:443`
+    /// ebenfalls. Eine ausdrückliche Feldangabe hat Vorrang vor dem Raten.
+    #[test]
+    fn an_explicit_field_beats_content_guessing() {
+        // AS-Nummern liegen fast alle im Portbereich.
+        assert_eq!(one("asn:15169").value, Value::Asn(15169));
+        assert_eq!(one("asn:Google").value, Value::Text("Google".into()));
+
+        // Ein Regelname darf eine Zahl sein.
+        assert_eq!(one("rule:443").value, Value::Text("443".into()));
+        // Ein Hostname ebenso.
+        assert_eq!(one("host:12345").value, Value::Text("12345".into()));
+        // Und ein Land, das wie eine MAC aussieht, gibt es zwar nicht —
+        // aber der Text bleibt Text.
+        assert_eq!(one("country:DE").value, Value::Text("DE".into()));
+        assert_eq!(one("proto:6").value, Value::Text("6".into()));
+        assert_eq!(one("iface:10").value, Value::Text("10".into()));
+    }
+
+    #[test]
+    fn scoped_address_and_port_fields_stay_typed() {
+        assert_eq!(one("src:10.0.0.5").value, Value::Ip("10.0.0.5".parse().unwrap()));
+        assert_eq!(one("dst:10.10.30.0/24").value, Value::Cidr("10.10.30.0/24".parse().unwrap()));
+        assert_eq!(one("dport:443").value, Value::Port(443));
+        // Unsinn in einem Portfeld trifft nichts, statt zu einem Textvergleich
+        // über alle Spalten zu entarten.
+        assert_eq!(one("dport:nonsense").value, Value::Text("nonsense".into()));
+    }
+
+    #[test]
+    fn without_a_field_the_content_still_decides() {
+        assert_eq!(one("15169").value, Value::Port(15169));
+        assert_eq!(one("10.0.0.5").value, Value::Ip("10.0.0.5".parse().unwrap()));
     }
 
     #[test]

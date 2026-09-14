@@ -40,10 +40,13 @@ pub async fn get_logs(
                 l.rdns, l.threat_score, l.threat_categories, l.abuse_is_tor,
                 r.name AS rule_name, r.descr AS rule_desc,
                 ii.name AS iface_in, io.name AS iface_out,
-                pr.name AS protocol, dn.name AS hostname
+                pr.name AS protocol, dn.name AS hostname, sv.name AS service_name
          FROM logs l ",
     );
     q.filter.push_joins(&mut qb);
+    // Not part of LogFilter::push_joins: only this endpoint's output needs
+    // the service name, and export.rs/dashboard.rs etc. share push_joins.
+    qb.push(" LEFT JOIN services sv ON sv.port = l.dst_port AND sv.proto = lower(pr.name) ");
     q.filter.push_where(&mut qb);
     if let Some((ts, id)) = cursor {
         qb.push(" AND (l.timestamp, l.id) < (").push_bind(ts).push(", ").push_bind(id).push(")");
@@ -97,6 +100,7 @@ pub async fn get_logs(
             "threat_score": r.get::<Option<i32>, _>("threat_score"),
             "threat_categories": r.get::<Option<Vec<String>>, _>("threat_categories"),
             "abuse_is_tor": r.get::<Option<bool>, _>("abuse_is_tor"),
+            "service": r.get::<Option<String>, _>("service_name").as_deref().map(crate::services::display_name),
         }));
     }
     Ok(Json(json!({ "rows": out, "next_cursor": next_cursor })))
@@ -213,6 +217,39 @@ mod tests {
         assert_eq!(body["rows"].as_array().unwrap().len(), 4);
         let body = get_json(&app, "/api/logs?q=9.9.9.9").await;
         assert!(body["rows"].as_array().unwrap().is_empty());
+    }
+
+    /// `service` kommt aus der IANA-Tabelle (dst_port, protocol) und trägt
+    /// die eine Anzeige-Ausnahme aus dem Vorgänger: `domain` heißt `DNS`.
+    /// Ein Port ohne Eintrag liefert `null`, keinen geratenen Namen.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn service_name_is_resolved_by_port_and_protocol(pool: sqlx::PgPool) {
+        crate::services::seed_if_empty(&pool).await.unwrap();
+        sqlx::query("INSERT INTO protocols (name) VALUES ('tcp'), ('udp')").execute(&pool).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, protocol_id, src_ip, dst_port)
+             VALUES (NOW(), 1, 1, '1.2.3.4', 443)",
+        ).execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, protocol_id, src_ip, dst_port)
+             VALUES (NOW() - INTERVAL '1 second', 2, 2, '1.2.3.4', 53)",
+        ).execute(&pool).await.unwrap();
+        // 65535/tcp is unassigned in the IANA registry — no row should match.
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, protocol_id, src_ip, dst_port)
+             VALUES (NOW() - INTERVAL '2 seconds', 1, 1, '1.2.3.4', 65535)",
+        ).execute(&pool).await.unwrap();
+
+        let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
+        let res = app.oneshot(Request::get("/api/logs?limit=3").body(Body::empty()).unwrap()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap(),
+        ).unwrap();
+        let rows = body["rows"].as_array().unwrap();
+        assert_eq!(rows[0]["service"].as_str(), Some("HTTPS"));
+        assert_eq!(rows[1]["service"].as_str(), Some("DNS"), "domain must display as DNS");
+        assert!(rows[2]["service"].is_null(), "unassigned port must be null, not guessed");
     }
 
     /// Eine tote Datenbank muss als Fehler ankommen, nicht als leere Liste —

@@ -12,6 +12,7 @@ async fn main() -> anyhow::Result<()> {
     let cfg = Config::from_env();
     let pool = uip_core::connect(&cfg.database_url).await?;
     sqlx::migrate!("../../migrations").run(&pool).await?;
+    uip_api::services::seed_if_empty(&pool).await?;
 
     let settings = uip_core::Settings::load(&pool, |k| std::env::var(k).ok()).await?;
     tracing::info!(

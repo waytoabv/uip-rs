@@ -153,10 +153,10 @@ fn term_hit(row: &LiveRow, term: &Term) -> Verdict {
             if hit { Verdict::Pass } else { Verdict::Reject }
         }
         // Land und ASN kennt eine frische Zeile noch nicht — nur die
-        // Anreicherung weiß es.
-        (Value::Text(_), Some(Field::Country)) | (Value::Text(_), Some(Field::Asn)) => {
-            Verdict::Unknowable
-        }
+        // Anreicherung weiß es. Das gilt für den AS-Namen wie für die Nummer.
+        (Value::Text(_), Some(Field::Country))
+        | (Value::Text(_), Some(Field::Asn))
+        | (Value::Asn(_), _) => Verdict::Unknowable,
         (Value::Text(t), Some(Field::Action)) => {
             if row.rule_action.is_some_and(|a| a.eq_ignore_ascii_case(t)) {
                 Verdict::Pass

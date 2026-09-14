@@ -1,3 +1,4 @@
+pub mod count;
 pub mod dashboard;
 pub mod error;
 pub mod export;
@@ -5,6 +6,7 @@ pub mod flows;
 pub mod filters;
 pub mod logs;
 pub mod search;
+pub mod services;
 pub mod static_files;
 pub mod threats;
 pub mod stream;
@@ -33,6 +35,7 @@ pub fn router(pool: PgPool, events: broadcast::Sender<Arc<LiveRow>>) -> Router {
     Router::new()
         .route("/api/health", get(|| async { "ok" }))
         .route("/api/logs", get(logs::get_logs))
+        .route("/api/logs/count", get(count::get_count))
         .route("/api/stream", get(stream::sse_stream))
         .route("/api/export", get(export::export_csv))
         .route("/api/stats", get(dashboard::get_stats))

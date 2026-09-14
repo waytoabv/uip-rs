@@ -65,6 +65,25 @@ fn range_start(range: &str) -> Option<DateTime<Utc>> {
 }
 
 impl LogFilter {
+    /// True wenn kein einziges Feld gesetzt ist — der Fall, in dem
+    /// `/api/logs/count` auf `approximate_row_count` statt auf ein echtes
+    /// `COUNT(*)` ausweichen darf, weil `push_where` ohnehin nur `WHERE TRUE`
+    /// ergäbe.
+    pub fn is_unfiltered(&self) -> bool {
+        self.log_type.is_empty()
+            && self.action.is_empty()
+            && self.direction.is_empty()
+            && self.iface.is_empty()
+            && self.proto.is_empty()
+            && self.country.is_empty()
+            && self.port.is_none()
+            && self.threat_min.is_none()
+            && self.from.is_none()
+            && self.to.is_none()
+            && self.range.is_none()
+            && self.q.is_none()
+    }
+
     /// Die Joins, die Filter und Ausgabe gemeinsam brauchen.
     pub fn push_joins(&self, qb: &mut QueryBuilder<'_, Postgres>) {
         qb.push(
@@ -159,6 +178,12 @@ fn push_term(qb: &mut QueryBuilder<'_, Postgres>, term: &Term) {
         },
         (Value::Mac(m), _) => {
             qb.push("l.mac_address::text = ").push_bind(m.clone());
+        }
+        // Entsteht nur aus `asn:<zahl>` und vergleicht die AS-Nummer exakt.
+        // Ohne eigenen Fall läse der Parser sie als Port — die meisten
+        // AS-Nummern liegen im Portbereich.
+        (Value::Asn(n), _) => {
+            qb.push("l.asn_number = ").push_bind(*n);
         }
         (Value::Text(t), field @ (Some(Field::Action) | Some(Field::LogType))) => {
             // action:<name> / type:<name> beschränken über die Id, nicht als
@@ -328,6 +353,14 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(matching(&pool, &f).await, ["10.10.30.7"]);
+    }
+
+    #[test]
+    fn is_unfiltered_is_true_only_for_a_bare_default() {
+        assert!(LogFilter::default().is_unfiltered());
+        assert!(!LogFilter { q: Some("x".into()), ..Default::default() }.is_unfiltered());
+        assert!(!LogFilter { action: vec!["block".into()], ..Default::default() }.is_unfiltered());
+        assert!(!LogFilter { port: Some(443), ..Default::default() }.is_unfiltered());
     }
 
     /// action:<name> muss über die Id filtern, nicht als Text durchfallen.
