@@ -4,6 +4,18 @@ import FilterBar from './FilterBar';
 import { emptyFilters, toQuery, type FilterState } from './filters';
 
 const MAX_ROWS = 500;
+const THEME_KEY = 'uip-theme';
+
+type Theme = 'light' | 'dark';
+
+function storedTheme(): Theme | null {
+  const raw = localStorage.getItem(THEME_KEY);
+  return raw === 'light' || raw === 'dark' ? raw : null;
+}
+
+function systemTheme(): Theme {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
 
 export default function App() {
   const [rows, setRows] = createSignal<LogRow[]>([]);
@@ -12,6 +24,8 @@ export default function App() {
   // Ob der Live-Stream gerade pausiert ist, weil der aktive Filter nach
   // Feldern fragt, die erst die Anreicherung liefert (Land, Threat-Score).
   const [suspended, setSuspended] = createSignal(false);
+  // `null` heißt: keine gespeicherte Wahl, die Systemeinstellung gilt.
+  const [theme, setTheme] = createSignal<Theme | null>(storedTheme());
 
   const query = createMemo(() => toQuery(filters()));
 
@@ -33,12 +47,31 @@ export default function App() {
     onCleanup(() => es.close());
   });
 
+  // Setzt `data-theme` nur, wenn eine explizite Wahl getroffen wurde — sonst
+  // bleibt das Attribut weg und `index.css` folgt der Systemeinstellung.
+  createEffect(() => {
+    const t = theme();
+    if (t) {
+      document.documentElement.setAttribute('data-theme', t);
+      localStorage.setItem(THEME_KEY, t);
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+      localStorage.removeItem(THEME_KEY);
+    }
+  });
+
+  const effectiveTheme = () => theme() ?? systemTheme();
+  const toggleTheme = () => setTheme(effectiveTheme() === 'dark' ? 'light' : 'dark');
+
   return (
     <main>
       <header class="app-header">
         <h1>uip</h1>
         <div class="app-actions">
           <button onClick={() => setPaused(!paused())}>{paused() ? 'Fortsetzen' : 'Pause'}</button>
+          <button onClick={toggleTheme}>
+            {effectiveTheme() === 'dark' ? 'Helles Design' : 'Dunkles Design'}
+          </button>
         </div>
       </header>
       <FilterBar filters={filters()} onChange={setFilters} />
