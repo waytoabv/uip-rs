@@ -1,4 +1,5 @@
 import { createSignal, For, Show, type Component } from 'solid-js';
+import FilterPanel from './FilterPanel';
 import {
   ACTIONS,
   describe,
@@ -92,6 +93,11 @@ const FilterBar: Component<Props> = (props) => {
   // `q` zu halten machte im Fork jeden Zwischenstand zu einem eigenen
   // Begriff — aus "10.10.10.0/24" wurden fünf.
   const [draft, setDraft] = createSignal('');
+  const [showPanel, setShowPanel] = createSignal(false);
+
+  // Wie viele Filter gerade wirken — die Zahl steht am Knopf, damit man
+  // ein zugeklapptes Panel nicht für leer hält.
+  const activeCount = () => describe(props.filters).length;
 
   const commitDraft = () => {
     const term = draft().trim();
@@ -261,6 +267,28 @@ const FilterBar: Component<Props> = (props) => {
               >
                 ✕
               </button>
+            </Show>
+          </div>
+
+          <div class="relative">
+            <button
+              type="button"
+              aria-expanded={showPanel()}
+              onClick={() => setShowPanel((v) => !v)}
+              class={`whitespace-nowrap rounded border px-3 py-1.5 text-xs transition-colors ${
+                activeCount() > 0
+                  ? 'border-teal-500/60 bg-teal-500/10 text-teal-300'
+                  : 'border-gray-700 text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              Filters{activeCount() > 0 ? ` (${activeCount()})` : ''}
+            </button>
+            <Show when={showPanel()}>
+              <FilterPanel
+                filters={props.filters}
+                onApply={(patch) => props.onChange({ ...props.filters, ...patch })}
+                onClose={() => setShowPanel(false)}
+              />
             </Show>
           </div>
         </div>
