@@ -1,0 +1,261 @@
+/**
+ * Reine Hilfsfunktionen für die Log-Tabelle: Farbwerte, Symbole und kleine
+ * Ableitungen aus den Rohdaten einer Log-Zeile. Kein Solid-Import hier —
+ * das hält die Datei mit `vitest --environment node` testbar, ohne DOM.
+ */
+
+// ── Typ- und Aktions-Pillen ────────────────────────────────────────────────
+
+const LOG_TYPE_PILL: Record<string, string> = {
+  firewall: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+  dns: 'bg-violet-500/15 text-violet-400 border-violet-500/30',
+  dhcp: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30',
+  wifi: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+  system: 'bg-gray-500/15 text-gray-300 border-gray-500/30',
+};
+
+const DEFAULT_PILL = 'bg-gray-500/15 text-gray-400 border-gray-500/30';
+
+/** Tailwind-Klassen für die TYPE-Pille; unbekannte Typen bekommen ein neutrales Grau. */
+export function logTypePillClass(logType: string | null | undefined): string {
+  if (!logType) return DEFAULT_PILL;
+  return LOG_TYPE_PILL[logType] ?? DEFAULT_PILL;
+}
+
+const ACTION_PILL: Record<string, string> = {
+  allow: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+  block: 'bg-red-500/20 text-red-400 border-red-500/40',
+  redirect: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
+};
+
+/** Tailwind-Klassen für die ACTION-Pille (auch für DHCP-/WLAN-Ereignisse als Ersatzwert). */
+export function actionPillClass(action: string | null | undefined): string {
+  if (!action) return DEFAULT_PILL;
+  return ACTION_PILL[action] ?? DEFAULT_PILL;
+}
+
+// ── Richtung ────────────────────────────────────────────────────────────────
+
+const DIRECTION_GLYPHS: Record<string, string> = {
+  inbound: '↓',
+  outbound: '↑',
+  local: '⟳',
+  nat: '↳',
+  inter_vlan: '⇔',
+  vpn: '⛨',
+};
+
+/** Das Pfeilzeichen für die schmale Richtungsspalte; unbekannt bleibt „—". */
+export function directionGlyph(direction: string | null | undefined): string {
+  if (!direction) return '—';
+  return DIRECTION_GLYPHS[direction] ?? '—';
+}
+
+const DIRECTION_COLOR: Record<string, string> = {
+  inbound: 'text-red-400',
+  outbound: 'text-blue-400',
+  local: 'text-gray-400',
+  nat: 'text-yellow-400',
+  inter_vlan: 'text-gray-300',
+  vpn: 'text-teal-400',
+};
+
+/** Textfarbe für das Richtungszeichen. */
+export function directionColorClass(direction: string | null | undefined): string {
+  if (!direction) return 'text-gray-600';
+  return DIRECTION_COLOR[direction] ?? 'text-gray-500';
+}
+
+// ── Dienst aus Port/Protokoll ────────────────────────────────────────────────
+
+/**
+ * Kleine, lokale Näherung an eine Dienst-Tabelle — das Original schlägt den
+ * Namen serverseitig in einer gepflegten IANA-Tabelle nach; hier gibt es nur
+ * die gebräuchlichsten Ports. Unbekannte Ports zeigen die nackte Portnummer.
+ */
+const WELL_KNOWN_PORTS: Record<number, string> = {
+  20: 'FTP-DATA',
+  21: 'FTP',
+  22: 'SSH',
+  23: 'TELNET',
+  25: 'SMTP',
+  53: 'DNS',
+  67: 'DHCP',
+  68: 'DHCP',
+  80: 'HTTP',
+  110: 'POP3',
+  119: 'NNTP',
+  123: 'NTP',
+  135: 'RPC',
+  137: 'NETBIOS',
+  138: 'NETBIOS',
+  139: 'NETBIOS',
+  143: 'IMAP',
+  161: 'SNMP',
+  162: 'SNMP-TRAP',
+  179: 'BGP',
+  194: 'IRC',
+  389: 'LDAP',
+  443: 'HTTPS',
+  445: 'SMB',
+  465: 'SMTPS',
+  500: 'IKE',
+  514: 'SYSLOG',
+  546: 'DHCPV6',
+  547: 'DHCPV6',
+  587: 'SMTP',
+  631: 'IPP',
+  636: 'LDAPS',
+  853: 'DNS-TLS',
+  873: 'RSYNC',
+  993: 'IMAPS',
+  995: 'POP3S',
+  1080: 'SOCKS',
+  1194: 'OPENVPN',
+  1433: 'MSSQL',
+  1521: 'ORACLE',
+  1701: 'L2TP',
+  1723: 'PPTP',
+  1883: 'MQTT',
+  2049: 'NFS',
+  2222: 'SSH-ALT',
+  3128: 'PROXY',
+  3306: 'MYSQL',
+  3389: 'RDP',
+  3478: 'STUN',
+  4500: 'IPSEC-NAT',
+  5060: 'SIP',
+  5061: 'SIPS',
+  5222: 'XMPP',
+  5353: 'MDNS',
+  5432: 'POSTGRES',
+  5900: 'VNC',
+  6379: 'REDIS',
+  8080: 'HTTP-ALT',
+  8443: 'HTTPS-ALT',
+  8883: 'SECURE-MQTT',
+  9100: 'PRINTER',
+  27017: 'MONGODB',
+};
+
+/** Näherungsweiser Dienstname aus dem Zielport. Kein Protokollabgleich — nur eine Tabelle. */
+export function serviceName(port: number | null | undefined): string {
+  if (port == null) return '—';
+  return WELL_KNOWN_PORTS[port] ?? String(port);
+}
+
+// ── Bedrohung ─────────────────────────────────────────────────────────────
+
+/** Ab welchem Score eine Zeile den roten Schimmer bekommt. */
+export const HIGH_THREAT_THRESHOLD = 50;
+
+/** Ob eine Zeile als „hohe Bedrohung" gilt (für den Zeilen-Farbton). */
+export function isHighThreat(score: number | null | undefined, threshold = HIGH_THREAT_THRESHOLD): boolean {
+  return score != null && score >= threshold;
+}
+
+/** Farbe des kleinen Punktes in der ABUSEIPDB-Spalte, gestaffelt nach Score. */
+export function threatDotClass(score: number | null | undefined): string {
+  if (score == null) return '';
+  if (score === 0) return 'bg-emerald-400';
+  if (score < 50) return 'bg-yellow-400';
+  if (score < 90) return 'bg-orange-400';
+  return 'bg-red-400';
+}
+
+const ABUSE_CATEGORIES: Record<number, string> = {
+  1: 'DNS Compromise',
+  2: 'DNS Poisoning',
+  3: 'Fraud Orders',
+  4: 'DDoS Attack',
+  5: 'FTP Brute-Force',
+  6: 'Ping of Death',
+  7: 'Phishing',
+  8: 'Fraud VoIP',
+  9: 'Open Proxy',
+  10: 'Web Spam',
+  11: 'Email Spam',
+  12: 'Blog Spam',
+  13: 'VPN IP',
+  14: 'Port Scan',
+  15: 'Hacking',
+  16: 'SQL Injection',
+  17: 'Spoofing',
+  18: 'Brute-Force',
+  19: 'Bad Web Bot',
+  20: 'Exploited Host',
+  21: 'Web App Attack',
+  22: 'SSH',
+  23: 'IoT Targeted',
+};
+
+/** AbuseIPDB-Kategoriecodes zu einer lesbaren, komma-getrennten Liste. */
+export function decodeThreatCategories(cats: readonly string[] | null | undefined): string | null {
+  if (!cats || cats.length === 0) return null;
+  return cats
+    .map((c) => {
+      if (c === 'blacklist') return 'Blacklist';
+      const n = Number.parseInt(c, 10);
+      return ABUSE_CATEGORIES[n] ?? `Cat ${c}`;
+    })
+    .join(', ');
+}
+
+// ── Regelbeschreibung ────────────────────────────────────────────────────────
+
+/** Original schreibt `[TAG]Text` ohne Leerzeichen — das hier trennt sie wieder. */
+export function normalizeRuleDesc(desc: string | null | undefined): string | null {
+  if (!desc) return null;
+  return desc.replace(/\](?!\s)/g, '] ');
+}
+
+// ── Netzwerkpfad ─────────────────────────────────────────────────────────────
+
+/** `iface_in → iface_out`, oder nur die eine bekannte Schnittstelle, oder „—". */
+export function networkPath(ifaceIn: string | null | undefined, ifaceOut: string | null | undefined): string {
+  if (ifaceIn && ifaceOut) return `${ifaceIn} → ${ifaceOut}`;
+  return ifaceIn || ifaceOut || '—';
+}
+
+// ── Lokale vs. entfernte Seite ───────────────────────────────────────────────
+
+/** Privat/reserviert im Sinne der Anzeige — nicht sicherheitskritisch, nur für die Zuordnung von Gerätename/rDNS. */
+export function isPrivateIp(ip: string | null | undefined): boolean {
+  if (!ip) return true;
+  if (ip.includes(':')) {
+    const lower = ip.toLowerCase();
+    if (lower === '::1' || lower === '::') return true;
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return true;
+    if (lower.startsWith('fe80')) return true;
+    if (lower.startsWith('ff')) return true;
+    return false;
+  }
+  if (ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('127.') || ip.startsWith('169.254.')) {
+    return true;
+  }
+  const m = /^172\.(\d+)\./.exec(ip);
+  if (m) {
+    const second = Number.parseInt(m[1], 10);
+    if (second >= 16 && second <= 31) return true;
+  }
+  return false;
+}
+
+/**
+ * Welche Seite (Quelle oder Ziel) das eigene Gerät ist. Der Server liefert nur
+ * ein einzelnes `hostname`- und ein einzelnes `rdns`-Feld statt getrennter
+ * Felder je Seite, also wird hier genähert: bei bekannter Richtung entscheidet
+ * sie (passend zur serverseitigen Anreicherungslogik in `uip-enrich`), sonst
+ * gewinnt die private Adresse.
+ */
+export function localSide(
+  direction: string | null | undefined,
+  srcIp: string | null | undefined,
+  dstIp: string | null | undefined,
+): 'src' | 'dst' {
+  if (direction === 'inbound') return 'dst';
+  if (direction === 'outbound') return 'src';
+  if (isPrivateIp(srcIp)) return 'src';
+  if (isPrivateIp(dstIp)) return 'dst';
+  return 'src';
+}
