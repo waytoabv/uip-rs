@@ -24,7 +24,7 @@ export default function App() {
       <button onClick={() => setPaused(!paused())}>{paused() ? 'Resume' : 'Pause'}</button>
       <table>
         <thead>
-          <tr><th>Zeit</th><th>Typ</th><th>Richtung</th><th>Aktion</th><th>Quelle</th><th>Ziel</th><th>Proto</th><th>Detail</th></tr>
+          <tr><th>Zeit</th><th>Typ</th><th>Richtung</th><th>Aktion</th><th>Quelle</th><th>Ziel</th><th>Proto</th><th>Herkunft</th><th>Threat</th><th>Detail</th></tr>
         </thead>
         <tbody>
           <For each={rows()}>{(r) => (
@@ -33,9 +33,11 @@ export default function App() {
               <td>{r.log_type}</td>
               <td>{r.direction}</td>
               <td>{r.rule_action}</td>
-              <td>{r.src_ip}{r.src_port != null ? `:${r.src_port}` : ''}</td>
-              <td>{r.dst_ip}{r.dst_port != null ? `:${r.dst_port}` : ''}</td>
+              <td title={r.rdns ?? ''}>{r.src_ip}{r.src_port != null ? `:${r.src_port}` : ''}</td>
+              <td title={r.rdns ?? ''}>{r.dst_ip}{r.dst_port != null ? `:${r.dst_port}` : ''}</td>
               <td>{r.protocol}</td>
+              <td>{r.geo_country}{r.geo_city ? ` / ${r.geo_city}` : ''}</td>
+              <td>{r.threat_score != null ? r.threat_score : ''}</td>
               <td>{r.dns_query ?? r.dhcp_event ?? r.wifi_event ?? r.rule_name ?? r.raw_log}</td>
             </tr>
           )}</For>

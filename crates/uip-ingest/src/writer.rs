@@ -63,6 +63,10 @@ async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row
     // System-Logs tragen raw immer (einzige Information); andere nur zur Diagnose nicht nötig → NULL spart Platz.
     let keep_raw = matches!(log_type, uip_core::types::LogType::System);
 
+    // Bewusst ohne geo_*/asn_*/rdns/threat_*: eine frisch geschriebene Zeile ist
+    // noch gar nicht angereichert (enrich_status = 0). Die Live-Tabelle zeigt
+    // sie hier leer und holt sie beim nächsten /api/logs-Reload nach — ehrlicher
+    // als ein Wert, den es zum Sendezeitpunkt noch nicht gab.
     let json = serde_json::json!({
         "timestamp": timestamp.to_rfc3339(),
         "log_type": log_type.as_str(),
@@ -114,7 +118,12 @@ async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row
     })
 }
 
-async fn flush(rows: &mut Vec<Row>, pool: &PgPool, events: &broadcast::Sender<String>) {
+async fn flush(
+    rows: &mut Vec<Row>,
+    pool: &PgPool,
+    events: &broadcast::Sender<String>,
+    wake_enricher: &Arc<tokio::sync::Notify>,
+) {
     if rows.is_empty() {
         return;
     }
@@ -163,6 +172,10 @@ async fn flush(rows: &mut Vec<Row>, pool: &PgPool, events: &broadcast::Sender<St
                 let _ = events.send(r.json); // niemand hört zu → egal
             }
             tracing::debug!(rows = n, "flushed batch");
+            // Weckt den Enrichment-Worker: es gibt jetzt frische Zeilen mit
+            // enrich_status = 0. Ohne Empfänger (Worker schläft nicht gerade
+            // im select!) ist notify_one ein No-Op — der Idle-Poll holt es nach.
+            wake_enricher.notify_one();
         }
         Err(e) => {
             tracing::error!(error = %e, rows = n, "batch insert failed, dropping batch");
@@ -176,6 +189,7 @@ pub async fn run_writer(
     pool: PgPool,
     cache: Arc<LookupCache>,
     events: broadcast::Sender<String>,
+    wake_enricher: Arc<tokio::sync::Notify>,
 ) {
     let mut buf: Vec<Row> = Vec::with_capacity(BATCH_MAX);
     let mut tick = tokio::time::interval(FLUSH_EVERY);
@@ -187,11 +201,11 @@ pub async fn run_writer(
                         Ok(row) => buf.push(row),
                         Err(e) => tracing::error!(error = %e, "lookup resolve failed, dropping row"),
                     }
-                    if buf.len() >= BATCH_MAX { flush(&mut buf, &pool, &events).await; }
+                    if buf.len() >= BATCH_MAX { flush(&mut buf, &pool, &events, &wake_enricher).await; }
                 }
-                None => { flush(&mut buf, &pool, &events).await; return; }
+                None => { flush(&mut buf, &pool, &events, &wake_enricher).await; return; }
             },
-            _ = tick.tick() => flush(&mut buf, &pool, &events).await,
+            _ = tick.tick() => flush(&mut buf, &pool, &events, &wake_enricher).await,
         }
     }
 }
@@ -209,7 +223,8 @@ mod tests {
         let cache = std::sync::Arc::new(LookupCache::new());
         let (tx, rx) = tokio::sync::mpsc::channel(1024);
         let (btx, mut brx) = tokio::sync::broadcast::channel(256);
-        let writer = tokio::spawn(run_writer(rx, pool.clone(), cache, btx));
+        let wake = std::sync::Arc::new(tokio::sync::Notify::new());
+        let writer = tokio::spawn(run_writer(rx, pool.clone(), cache, btx, wake));
 
         let ctx = FirewallCtx { wan_interfaces: ["ppp0".to_string()].into_iter().collect(), wan_ips: Default::default() };
         let p = parse_log(

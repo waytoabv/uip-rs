@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/uip-core", "crates/uip-ingest", "crates/uip-api", "crates/uip"]
+members = ["crates/uip-core", "crates/uip-ingest", "crates/uip-api", "crates/uip", "crates/uip-enrich"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,7 +9,7 @@ edition = "2021"
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono", "ipnetwork", "mac_address", "migrate"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono", "ipnetwork", "mac_address", "migrate", "json"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -21,3 +21,8 @@ ipnetwork = "0.20"
 mac_address = "1"
 futures = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
+async-trait = "0.1"
+arc-swap = "1"
+maxminddb = "0.26"
+hickory-resolver = "0.25"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

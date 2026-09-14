@@ -1,0 +1,24 @@
+[package]
+name = "uip-enrich"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+uip-core = { path = "../uip-core" }
+tokio.workspace = true
+sqlx.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+ipnetwork.workspace = true
+async-trait.workspace = true
+arc-swap.workspace = true
+maxminddb.workspace = true
+hickory-resolver.workspace = true
+reqwest.workspace = true
+
+[dev-dependencies]
+axum = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
