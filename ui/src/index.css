@@ -1,64 +1,49 @@
-/* Helle Palette (Standard). Eine dunkle Palette überschreibt dieselben
-   Variablen weiter unten — einmal für eine getroffene Wahl
-   (`data-theme="dark"`), einmal für die Systemeinstellung ohne getroffene
-   Wahl. Eine getroffene Wahl gewinnt in beide Richtungen. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Dunkel ist der Normalfall — das Original ist dunkel, und mit heller
+   Grundeinstellung stimmte kein einziger Farbwert mit der Vorlage überein.
+   Hell gibt es weiterhin über [data-theme="light"]. */
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
   font: 16px/1.4 ui-monospace, Consolas, monospace;
 
-  --bg: #ffffff;
-  --fg: #1a1a1a;
-  --muted: #666666;
-  --border: #d7d7d7;
-  --surface: #f4f5f7;
-  --surface-hover: #eceef2;
-  --accent: #2563eb;
-  --accent-fg: #ffffff;
-  --danger-fg: #7a1f1f;
-  --danger-bg: #fde8e8;
-  --danger-border: #f3c2c2;
-  --input-bg: #ffffff;
-  --input-border: #c7c7c7;
-  --chip-bg: #e5e7eb;
-  --chip-fg: #111827;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --bg: #12141a;
-    --fg: #e6e8ec;
-    --muted: #9aa0aa;
-    --border: #2a2d36;
-    --surface: #1a1d24;
-    --surface-hover: #232732;
-    --accent: #3b82f6;
-    --accent-fg: #0b0d12;
-    --danger-fg: #f6a5a5;
-    --danger-bg: #2a1616;
-    --danger-border: #5a2a2a;
-    --input-bg: #1a1d24;
-    --input-border: #333844;
-    --chip-bg: #262b35;
-    --chip-fg: #e6e8ec;
-  }
-}
-
-:root[data-theme='dark'] {
-  --bg: #12141a;
-  --fg: #e6e8ec;
-  --muted: #9aa0aa;
-  --border: #2a2d36;
-  --surface: #1a1d24;
-  --surface-hover: #232732;
+  --bg: #000000;
+  --fg: #e5e7eb;
+  --muted: #9ca3af;
+  --border: #1f2937;
+  --surface: #0b0f17;
+  --surface-hover: #111827;
   --accent: #3b82f6;
-  --accent-fg: #0b0d12;
-  --danger-fg: #f6a5a5;
+  --accent-fg: #ffffff;
+  --danger-fg: #f87171;
   --danger-bg: #2a1616;
   --danger-border: #5a2a2a;
-  --input-bg: #1a1d24;
-  --input-border: #333844;
-  --chip-bg: #262b35;
-  --chip-fg: #e6e8ec;
+  --input-bg: #111827;
+  --input-border: #374151;
+  --chip-bg: #1f2937;
+  --chip-fg: #e5e7eb;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --fg: #111827;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --surface: #f9fafb;
+  --surface-hover: #f3f4f6;
+  --accent: #2563eb;
+  --accent-fg: #ffffff;
+  --danger-fg: #b91c1c;
+  --danger-bg: #fef2f2;
+  --danger-border: #fecaca;
+  --input-bg: #ffffff;
+  --input-border: #d1d5db;
+  --chip-bg: #f3f4f6;
+  --chip-fg: #111827;
 }
 
 body {
