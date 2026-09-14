@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh MaxMind GeoLite2 databases for uip
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/geoipupdate -d /var/lib/uip/geoip -f /etc/uip/GeoIP.conf
+# Der Worker bemerkt die neuen Dateien von selbst an ihrer mtime.

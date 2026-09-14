@@ -13,7 +13,7 @@ msg() { echo -e "\e[1;32m==>\e[0m $*"; }
 msg "Pakete"
 apt-get update -qq
 apt-get install -y -qq curl git build-essential pkg-config libssl-dev \
-  postgresql-common gnupg ca-certificates >/dev/null
+  postgresql-common gnupg ca-certificates geoipupdate >/dev/null
 
 msg "PostgreSQL 17 + TimescaleDB Repos"
 /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y >/dev/null
@@ -65,6 +65,8 @@ UIP_DB_URL=postgres://${DB_USER}:${DB_PASS}@127.0.0.1/${DB_NAME}
 UIP_HTTP_ADDR=0.0.0.0:8080
 UIP_SYSLOG_ADDR=0.0.0.0:514
 UIP_WAN_IFACES=ppp0
+UIP_GEOIP_DIR=/var/lib/uip/geoip
+#UIP_ABUSEIPDB_KEY=
 TZ=$(cat /etc/timezone 2>/dev/null || echo UTC)
 EOF
   chmod 600 /etc/uip/uip.env
@@ -72,5 +74,26 @@ fi
 install -m 644 "${SRC_DIR}/lxc/systemd/uip.service" /etc/systemd/system/uip.service
 systemctl daemon-reload
 systemctl enable --now uip
+
+msg "GeoIP"
+mkdir -p /var/lib/uip/geoip
+chown -R uip:uip /var/lib/uip
+if [ -n "${MAXMIND_ACCOUNT_ID:-}" ] && [ -n "${MAXMIND_LICENSE_KEY:-}" ]; then
+  cat > /etc/uip/GeoIP.conf <<EOF
+AccountID ${MAXMIND_ACCOUNT_ID}
+LicenseKey ${MAXMIND_LICENSE_KEY}
+EditionIDs GeoLite2-City GeoLite2-ASN
+EOF
+  chmod 600 /etc/uip/GeoIP.conf
+  install -m 644 "${SRC_DIR}/lxc/systemd/uip-geoip.service" /etc/systemd/system/
+  install -m 644 "${SRC_DIR}/lxc/systemd/uip-geoip.timer" /etc/systemd/system/
+  systemctl daemon-reload
+  systemctl enable --now uip-geoip.timer
+  # Einmal sofort, damit nicht bis zum ersten Timer-Lauf gewartet wird.
+  systemctl start uip-geoip.service || msg "GeoIP-Download fehlgeschlagen — Timer versucht es erneut"
+else
+  msg "Ohne MAXMIND_ACCOUNT_ID/MAXMIND_LICENSE_KEY bleibt GeoIP leer."
+  msg "Später nachrüstbar: /etc/uip/GeoIP.conf anlegen und uip-geoip.timer aktivieren."
+fi
 
 msg "Fertig: http://$(hostname -I | awk '{print $1}'):8080 — Syslog auf UDP 514"
