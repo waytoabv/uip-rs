@@ -1,3 +1,4 @@
+use crate::filters::LogFilter;
 use axum::extract::{Query, State};
 use axum::Json;
 use chrono::{DateTime, TimeZone, Utc};
@@ -9,7 +10,8 @@ use sqlx::{PgPool, Row};
 pub struct LogsQuery {
     pub limit: Option<i64>,
     pub before: Option<String>,
-    pub log_type: Option<String>,
+    #[serde(flatten)]
+    pub filter: LogFilter,
 }
 
 fn parse_cursor(s: &str) -> Option<(DateTime<Utc>, i64)> {
@@ -18,44 +20,32 @@ fn parse_cursor(s: &str) -> Option<(DateTime<Utc>, i64)> {
     Some((Utc.timestamp_micros(micros).single()?, id.parse().ok()?))
 }
 
-fn log_type_id(name: &str) -> Option<i16> {
-    Some(match name { "firewall" => 1, "dns" => 2, "dhcp" => 3, "wifi" => 4, "system" => 5, _ => return None })
-}
-
 pub async fn get_logs(State(pool): State<PgPool>, Query(q): Query<LogsQuery>) -> Json<Value> {
     let limit = q.limit.unwrap_or(100).clamp(1, 1000);
     let cursor = q.before.as_deref().and_then(parse_cursor);
-    let type_filter = q.log_type.as_deref().and_then(log_type_id);
 
-    let rows = sqlx::query(
-        r#"SELECT l.id, l.timestamp, l.log_type_id, l.direction_id, l.rule_action_id,
-                  -- host() statt ::text: inet hängt sonst die /32 an, und der
-                  -- SSE-Stream sendet dieselbe Adresse ohne Maske.
-                  host(l.src_ip) AS src_ip, host(l.dst_ip) AS dst_ip,
-                  l.src_port, l.dst_port, l.mac_address::text AS mac_address,
-                  l.dns_query, l.dns_type, l.dns_answer, l.dhcp_event, l.wifi_event, l.raw_log,
-                  l.geo_country, l.geo_city, l.geo_lat::float8 AS geo_lat,
-                  l.geo_lon::float8 AS geo_lon, l.asn_number, l.asn_name,
-                  l.rdns, l.threat_score, l.threat_categories, l.abuse_is_tor,
-                  r.name AS rule_name, r.descr AS rule_desc,
-                  ii.name AS iface_in, io.name AS iface_out,
-                  pr.name AS protocol, dn.name AS hostname
-           FROM logs l
-           LEFT JOIN rules r ON r.id = l.rule_id
-           LEFT JOIN interfaces ii ON ii.id = l.iface_in_id
-           LEFT JOIN interfaces io ON io.id = l.iface_out_id
-           LEFT JOIN protocols pr ON pr.id = l.protocol_id
-           LEFT JOIN device_names dn ON dn.id = l.hostname_id
-           WHERE ($1::timestamptz IS NULL OR (l.timestamp, l.id) < ($1, $2))
-             AND ($3::smallint IS NULL OR l.log_type_id = $3)
-           ORDER BY l.timestamp DESC, l.id DESC
-           LIMIT $4"#,
-    )
-    .bind(cursor.map(|c| c.0)).bind(cursor.map(|c| c.1).unwrap_or(0))
-    .bind(type_filter).bind(limit)
-    .fetch_all(&pool)
-    .await
-    .unwrap_or_default();
+    let mut qb = sqlx::QueryBuilder::new(
+        "SELECT l.id, l.timestamp, l.log_type_id, l.direction_id, l.rule_action_id,
+                -- host() statt ::text: inet hängt sonst die /32 an, und der
+                -- SSE-Stream sendet dieselbe Adresse ohne Maske.
+                host(l.src_ip) AS src_ip, host(l.dst_ip) AS dst_ip,
+                l.src_port, l.dst_port, l.mac_address::text AS mac_address,
+                l.dns_query, l.dns_type, l.dns_answer, l.dhcp_event, l.wifi_event, l.raw_log,
+                l.geo_country, l.geo_city, l.geo_lat::float8 AS geo_lat,
+                l.geo_lon::float8 AS geo_lon, l.asn_number, l.asn_name,
+                l.rdns, l.threat_score, l.threat_categories, l.abuse_is_tor,
+                r.name AS rule_name, r.descr AS rule_desc,
+                ii.name AS iface_in, io.name AS iface_out,
+                pr.name AS protocol, dn.name AS hostname
+         FROM logs l ",
+    );
+    q.filter.push_joins(&mut qb);
+    q.filter.push_where(&mut qb);
+    if let Some((ts, id)) = cursor {
+        qb.push(" AND (l.timestamp, l.id) < (").push_bind(ts).push(", ").push_bind(id).push(")");
+    }
+    qb.push(" ORDER BY l.timestamp DESC, l.id DESC LIMIT ").push_bind(limit);
+    let rows = qb.build().fetch_all(&pool).await.unwrap_or_default();
 
     const LOG_TYPES: [&str; 5] = ["firewall", "dns", "dhcp", "wifi", "system"];
     const DIRECTIONS: [&str; 6] = ["inbound", "outbound", "local", "inter_vlan", "vpn", "nat"];
@@ -113,6 +103,12 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
+
+    async fn get_json(app: &axum::Router, uri: &str) -> serde_json::Value {
+        let res = app.clone().oneshot(Request::get(uri).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "bei {uri}");
+        serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 1 << 22).await.unwrap()).unwrap()
+    }
 
     async fn seed(pool: &sqlx::PgPool, n: i32) {
         for i in 0..n {
@@ -181,5 +177,37 @@ mod tests {
         assert_eq!(row["asn_name"].as_str(), Some("GOOGLE"));
         assert_eq!(row["rdns"].as_str(), Some("dns.google."));
         assert_eq!(row["threat_score"].as_i64(), Some(42));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn the_endpoint_applies_filters_and_keeps_paging(pool: sqlx::PgPool) {
+        for i in 0..4 {
+            sqlx::query(
+                "INSERT INTO logs (timestamp, log_type_id, rule_action_id, src_ip, dst_port)
+                 VALUES (NOW() - make_interval(secs => $1::int), $2, $3, '1.2.3.4', 443)",
+            )
+            .bind(i)
+            .bind(if i % 2 == 0 { 1i16 } else { 2i16 })   // firewall / dns
+            .bind(if i % 2 == 0 { Some(2i16) } else { None }) // block / -
+            .execute(&pool).await.unwrap();
+        }
+        let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
+
+        let body = get_json(&app, "/api/logs?log_type=firewall").await;
+        assert_eq!(body["rows"].as_array().unwrap().len(), 2);
+        assert!(body["rows"].as_array().unwrap().iter().all(|r| r["log_type"] == "firewall"));
+
+        // Filter und Cursor zusammen: Seite 1 und 2 überschneiden sich nicht.
+        let first = get_json(&app, "/api/logs?log_type=firewall&limit=1").await;
+        let cursor = first["next_cursor"].as_str().unwrap();
+        let second = get_json(&app, &format!("/api/logs?log_type=firewall&limit=1&before={cursor}")).await;
+        assert_eq!(second["rows"].as_array().unwrap().len(), 1);
+        assert_ne!(first["rows"][0]["id"], second["rows"][0]["id"]);
+
+        // Suche
+        let body = get_json(&app, "/api/logs?q=443").await;
+        assert_eq!(body["rows"].as_array().unwrap().len(), 4);
+        let body = get_json(&app, "/api/logs?q=9.9.9.9").await;
+        assert!(body["rows"].as_array().unwrap().is_empty());
     }
 }
