@@ -21,10 +21,45 @@ cd ui && npm ci && npm run build
 cd .. && cargo build --release
 ```
 
+## Searching
+
+The search box takes whatever you know — an address, a port, a device name —
+and works out what it is, rather than comparing everything as text. That
+distinction matters: compared as text, a search for `10.10.10.10` also returns
+`10.10.10.100`, and the address columns fall out of reach of their index.
+
+Terms are separated by spaces and must **all** match, so the box doubles as a
+way to stack filters:
+
+```
+10.10.30.0/24 443 !tcp        that subnet, port 443, not TCP
+src:10.0.0.5 rule:"LAN to"    each scoped to one field
+nas denied                    both words, anywhere they are shown
+```
+
+| You type | Read as |
+|---|---|
+| `10.0.0.5` | an address — exact, indexed |
+| `10.10.30.0/24`, `10.10.30.`, `10.10.30.*` | a network |
+| `443` | a port (source or destination) |
+| `aa:bb:cc:dd:ee:ff` | a MAC address |
+| anything else | text; `*` is a wildcard |
+
+`!term` or `-term` negates. A prefix scopes a term to one field: `src dst ip
+port sport dport rule country asn proto iface host action type`.
+
+Every filter is also a query parameter on `/api/logs`, `/api/export` (CSV) and
+`/api/stream` (SSE). The live stream applies the same filter, but suspends
+visibly when asked about country, ASN or threat score — a row that has just
+arrived has not been enriched yet, so filtering it on those fields would drop
+everything. Reload to see the enriched rows.
+
 ## Status
 
-Early development. See [design doc](docs/superpowers/specs/2026-09-13-uip-rs-rewrite-design.md)
-for architecture and the phased roadmap.
+Early development — ingest, enrichment, filtering, search and export work.
+See the [design doc](docs/superpowers/specs/2026-09-13-uip-rs-rewrite-design.md)
+for architecture and the phased roadmap; dashboard, threat map and flow view
+are still ahead.
 
 ## Origin & license
 
