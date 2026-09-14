@@ -44,3 +44,41 @@ export function tickIndices(n: number, count: number): number[] {
   }
   return [...idx].sort((a, b) => a - b);
 }
+
+/**
+ * Rundet auf einen "schönen" Wert: 1, 2, 2.5, 5 oder 10 mal eine Zehnerpotenz.
+ */
+function niceNum(range: number, round: boolean): number {
+  const exp = Math.floor(Math.log10(range));
+  const f = range / 10 ** exp;
+  let nf: number;
+  if (round) {
+    nf = f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10;
+  } else {
+    nf = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10;
+  }
+  return nf * 10 ** exp;
+}
+
+/**
+ * Obergrenze und Teilstriche einer Achse.
+ *
+ * Das rohe Maximum als Obergrenze zu nehmen ergibt Beschriftungen wie
+ * "1183204" und lässt die Fläche oben am Rand kleben. Der Fork rundet auf
+ * glatte Schritte (0, 300k, 600k, 900k, 1200k) — das ist der sichtbare
+ * Unterschied in der Skalierung, nicht bloß Kosmetik: an krummen Zahlen
+ * lässt sich nichts ablesen.
+ */
+export function niceAxis(max: number, tickCount = 4): { max: number; ticks: number[] } {
+  if (!Number.isFinite(max) || max <= 0) {
+    return { max: 1, ticks: [0, 1] };
+  }
+  const step = niceNum(niceNum(max, false) / tickCount, true);
+  const top = Math.ceil(max / step) * step;
+  const ticks: number[] = [];
+  for (let v = 0; v <= top + step / 2; v += step) {
+    // Gleitkomma-Reste wegputzen: 0.1+0.2 soll 0.3 heißen, nicht 0.30000000004.
+    ticks.push(Number(v.toFixed(10)));
+  }
+  return { max: top, ticks };
+}

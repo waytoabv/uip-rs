@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { areaPath, tickIndices, xScale, yScale } from './DashChartMath';
+import { areaPath, tickIndices, xScale, yScale , niceAxis } from './DashChartMath';
 
 describe('yScale', () => {
   it('bildet 0 auf das untere (rangeMax) und domainMax auf das obere Ende (rangeMin) ab', () => {
@@ -72,5 +72,33 @@ describe('tickIndices', () => {
   it('dedupliziert, wenn count nahe an n liegt', () => {
     const idx = tickIndices(4, 5);
     expect(new Set(idx).size).toBe(idx.length);
+  });
+});
+
+describe('niceAxis', () => {
+  it('rundet auf ablesbare Schritte auf', () => {
+    const a = niceAxis(1183204);
+    expect(a.max).toBeGreaterThanOrEqual(1183204);
+    expect(a.ticks[0]).toBe(0);
+    expect(a.ticks[a.ticks.length - 1]).toBe(a.max);
+    // Gleichmäßige Abstände — sonst lügt das Raster.
+    const step = a.ticks[1] - a.ticks[0];
+    for (let i = 1; i < a.ticks.length; i++) {
+      expect(a.ticks[i] - a.ticks[i - 1]).toBeCloseTo(step, 6);
+    }
+    // Und die Schritte sind glatt, nicht krumm.
+    expect(step % 10 ** Math.floor(Math.log10(step))).toBeCloseTo(0, 6);
+  });
+
+  it('deckt das Maximum immer ab', () => {
+    for (const m of [1, 7, 42, 99, 100, 101, 1234, 999999]) {
+      expect(niceAxis(m).max).toBeGreaterThanOrEqual(m);
+    }
+  });
+
+  it('überlebt leere und unsinnige Daten', () => {
+    expect(niceAxis(0)).toEqual({ max: 1, ticks: [0, 1] });
+    expect(niceAxis(-5)).toEqual({ max: 1, ticks: [0, 1] });
+    expect(niceAxis(Number.NaN)).toEqual({ max: 1, ticks: [0, 1] });
   });
 });

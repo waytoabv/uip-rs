@@ -102,9 +102,23 @@ impl LogFilter {
         if !types.is_empty() {
             qb.push(" AND l.log_type_id = ANY(").push_bind(types).push(")");
         }
+        // "unknown" ist keine Id, sondern das Fehlen einer: Zeilen ohne
+        // erkannte Aktion. Ohne diesen Fall verschwände die Pille wirkungslos,
+        // weil `ids` den Namen zu keiner Id auflöst und die Liste leer bliebe.
+        let wants_unknown = self.action.iter().any(|a| a == "unknown");
         let actions = ids(&self.action, action_id);
-        if !actions.is_empty() {
-            qb.push(" AND l.rule_action_id = ANY(").push_bind(actions).push(")");
+        if !actions.is_empty() || wants_unknown {
+            qb.push(" AND (");
+            if !actions.is_empty() {
+                qb.push("l.rule_action_id = ANY(").push_bind(actions).push(")");
+                if wants_unknown {
+                    qb.push(" OR ");
+                }
+            }
+            if wants_unknown {
+                qb.push("l.rule_action_id IS NULL");
+            }
+            qb.push(")");
         }
         let directions = ids(&self.direction, direction_id);
         if !directions.is_empty() {
@@ -341,6 +355,24 @@ mod tests {
             .execute(&pool).await.unwrap();
         let f = LogFilter { q: Some("10.10.10.10".into()), ..Default::default() };
         assert!(matching(&pool, &f).await.is_empty(), "10.10.10.10 darf 10.10.10.100 nicht treffen");
+    }
+
+
+    /// `unknown` ist die vierte Aktions-Pille des Forks und meint Zeilen ohne
+    /// erkannte Aktion — etwa DNS. Ohne eigenen Fall löste `ids` den Namen zu
+    /// keiner Id auf, die Liste blieb leer und der Filter wirkte gar nicht.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn unknown_action_matches_rows_without_one(pool: sqlx::PgPool) {
+        seed(&pool).await;
+        let f = LogFilter { action: vec!["unknown".into()], ..Default::default() };
+        assert_eq!(matching(&pool, &f).await, ["10.10.30.100"], "nur die DNS-Zeile");
+
+        // Zusammen mit einer echten Aktion gilt die Vereinigung.
+        let f = LogFilter { action: vec!["block".into(), "unknown".into()], ..Default::default() };
+        let out = matching(&pool, &f).await;
+        assert_eq!(out.len(), 2);
+        assert!(out.contains(&"1.2.3.4".to_string()));
+        assert!(out.contains(&"10.10.30.100".to_string()));
     }
 
     #[sqlx::test(migrations = "../../migrations")]

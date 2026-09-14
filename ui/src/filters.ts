@@ -56,7 +56,9 @@ export function emptyFilters(): FilterState {
 }
 
 export const LOG_TYPES = ['firewall', 'dns', 'dhcp', 'wifi', 'system'] as const;
-export const ACTIONS = ['allow', 'block', 'redirect'] as const;
+// 'unknown' meint Zeilen ohne erkannte Aktion (etwa DNS) — im Backend
+// kein Id-Wert, sondern `rule_action_id IS NULL`.
+export const ACTIONS = ['allow', 'block', 'redirect', 'unknown'] as const;
 // 'local' ist eine gültige Backend-Richtung ohne eigene Pille — sobald eine
 // der fünf hier abgewählt wird, verschwindet 'local' aus der Auswahl mit,
 // genau wie im Original.
@@ -72,6 +74,8 @@ export const RANGE_OPTIONS: Array<{ value: string; label: string }> = [
   // genau wie jeden anderen "<Zahl>d"-Wert.
   { value: '60d', label: '60d' },
   { value: '90d', label: '90d' },
+  { value: '180d', label: '180d' },
+  { value: '365d', label: '365d' },
 ];
 
 /**

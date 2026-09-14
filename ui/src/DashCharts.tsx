@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show, type Component, type JSX } from 'solid-js';
 import { formatCompactNumber, formatNumber } from './DashFormat';
-import { areaPath, tickIndices, xScale, yScale } from './DashChartMath';
+import { areaPath, niceAxis, tickIndices, xScale, yScale } from './DashChartMath';
 
 export interface SeriesPoint {
   t: string;
@@ -59,9 +59,11 @@ const ChartAxes: Component<
   AxisProps & { onMouseMove: (e: MouseEvent) => void; onMouseLeave: () => void; children: JSX.Element }
 > = (props) => {
   const innerH = () => props.height - PAD_T - PAD_B;
-  const y = createMemo(() => yScale(props.maxValue, PAD_T, PAD_T + innerH()));
+  // Glatte Obergrenze statt des rohen Maximums: sonst stehen an der Achse
+  // krumme Zahlen und die Fläche klebt am oberen Rand.
+  const axis = createMemo(() => niceAxis(props.maxValue));
+  const y = createMemo(() => yScale(axis().max, PAD_T, PAD_T + innerH()));
   const x = createMemo(() => xScale(props.points.length, PAD_L, W - PAD_R));
-  const yTicks = [0, 0.25, 0.5, 0.75, 1];
   const xTickIdx = createMemo(() => tickIndices(props.points.length, 5));
 
   return (
@@ -73,9 +75,8 @@ const ChartAxes: Component<
     >
       {/* y-Achse: vier stille Hilfslinien plus Beschriftung, keine Achse mit
           Strich — im Original trägt nur die Zahl links die Information. */}
-      <For each={yTicks}>
-        {(f) => {
-          const v = props.maxValue * f;
+      <For each={axis().ticks}>
+        {(v) => {
           const yy = y()(v);
           return (
             <>
@@ -111,7 +112,7 @@ export const TrafficOverTimeChart: Component<{ points: SeriesPoint[]; bucket: st
   const { hoverIdx, onMove, onLeave } = useHover(() => props.points.length);
 
   const path = createMemo(() => {
-    const y = yScale(maxValue(), PAD_T, PAD_T + innerH);
+    const y = yScale(niceAxis(maxValue()).max, PAD_T, PAD_T + innerH);
     const x = xScale(props.points.length, PAD_L, W - PAD_R);
     const xs = props.points.map((_, i) => x(i));
     const tops = totals().map((v) => y(v));
@@ -168,7 +169,7 @@ export const TrafficByActionChart: Component<{ points: SeriesPoint[]; bucket: st
   const { hoverIdx, onMove, onLeave } = useHover(() => props.points.length);
 
   const scales = createMemo(() => ({
-    y: yScale(maxValue(), PAD_T, PAD_T + innerH),
+    y: yScale(niceAxis(maxValue()).max, PAD_T, PAD_T + innerH),
     x: xScale(props.points.length, PAD_L, W - PAD_R),
   }));
 
