@@ -2505,6 +2505,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sqlx",
  "tokio",
  "tokio-stream",

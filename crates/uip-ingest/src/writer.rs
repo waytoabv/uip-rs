@@ -6,7 +6,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
-use uip_core::{LookupCache, ParsedLog};
+use uip_core::{LiveRow, LookupCache, ParsedLog};
 
 const BATCH_MAX: usize = 200;
 const FLUSH_EVERY: Duration = Duration::from_millis(200);
@@ -33,7 +33,7 @@ struct Row {
     dhcp_event: Option<String>,
     wifi_event: Option<String>,
     raw_log: Option<String>,
-    json: String,
+    live: Arc<LiveRow>,
 }
 
 async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row, sqlx::Error> {
@@ -67,28 +67,28 @@ async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row
     // noch gar nicht angereichert (enrich_status = 0). Die Live-Tabelle zeigt
     // sie hier leer und holt sie beim nächsten /api/logs-Reload nach — ehrlicher
     // als ein Wert, den es zum Sendezeitpunkt noch nicht gab.
-    let json = serde_json::json!({
-        "timestamp": timestamp.to_rfc3339(),
-        "log_type": log_type.as_str(),
-        "direction": p.direction.map(|d| d.as_str()),
-        "rule_name": p.rule_name,
-        "rule_action": p.rule_action.map(|a| a.as_str()),
-        "protocol": p.protocol,
-        "iface_in": p.interface_in,
-        "iface_out": p.interface_out,
-        "src_ip": p.src_ip.map(|i| i.to_string()),
-        "dst_ip": p.dst_ip.map(|i| i.to_string()),
-        "src_port": p.src_port,
-        "dst_port": p.dst_port,
-        "mac_address": p.mac_address,
-        "hostname": p.hostname,
-        "dns_query": p.dns_query,
-        "dns_type": p.dns_type,
-        "dns_answer": p.dns_answer,
-        "dhcp_event": p.dhcp_event,
-        "wifi_event": p.wifi_event,
-    })
-    .to_string();
+    let live = Arc::new(LiveRow {
+        timestamp,
+        log_type: log_type.as_str(),
+        direction: p.direction.map(|d| d.as_str()),
+        rule_action: p.rule_action.map(|a| a.as_str()),
+        rule_name: p.rule_name.clone(),
+        protocol: p.protocol.clone(),
+        iface_in: p.interface_in.clone(),
+        iface_out: p.interface_out.clone(),
+        src_ip: p.src_ip,
+        dst_ip: p.dst_ip,
+        src_port: p.src_port,
+        dst_port: p.dst_port,
+        mac_address: p.mac_address.clone(),
+        hostname: p.hostname.clone(),
+        dns_query: p.dns_query.clone(),
+        dns_type: p.dns_type.clone(),
+        dns_answer: p.dns_answer.clone(),
+        dhcp_event: p.dhcp_event.clone(),
+        wifi_event: p.wifi_event.clone(),
+        raw_log: keep_raw.then(|| p.raw_log.clone()),
+    });
 
     Ok(Row {
         timestamp,
@@ -114,14 +114,14 @@ async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row
         dhcp_event: p.dhcp_event,
         wifi_event: p.wifi_event,
         raw_log: keep_raw.then_some(p.raw_log),
-        json,
+        live,
     })
 }
 
 async fn flush(
     rows: &mut Vec<Row>,
     pool: &PgPool,
-    events: &broadcast::Sender<String>,
+    events: &broadcast::Sender<Arc<LiveRow>>,
     wake_enricher: &Arc<tokio::sync::Notify>,
 ) {
     if rows.is_empty() {
@@ -169,7 +169,7 @@ async fn flush(
     match res {
         Ok(_) => {
             for r in rows.drain(..) {
-                let _ = events.send(r.json); // niemand hört zu → egal
+                let _ = events.send(r.live); // niemand hört zu → egal
             }
             tracing::debug!(rows = n, "flushed batch");
             // Weckt den Enrichment-Worker: es gibt jetzt frische Zeilen mit
@@ -188,7 +188,7 @@ pub async fn run_writer(
     mut rx: mpsc::Receiver<ParsedLog>,
     pool: PgPool,
     cache: Arc<LookupCache>,
-    events: broadcast::Sender<String>,
+    events: broadcast::Sender<Arc<LiveRow>>,
     wake_enricher: Arc<tokio::sync::Notify>,
 ) {
     let mut buf: Vec<Row> = Vec::with_capacity(BATCH_MAX);
@@ -243,6 +243,6 @@ mod tests {
         assert_eq!(status, 0); // pending für Phase-2-Worker
         assert_eq!(lt, 1);
         let evt = brx.recv().await.unwrap();
-        assert!(evt.contains("\"src_ip\":\"1.2.3.4\""));
+        assert_eq!(evt.src_ip, Some("1.2.3.4".parse().unwrap()));
     }
 }

@@ -21,3 +21,4 @@ mime_guess = "2"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+serde_urlencoded = "0.7"
