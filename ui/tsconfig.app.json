@@ -4,7 +4,10 @@
     "target": "es2023",
     "module": "esnext",
     "lib": ["ES2023", "DOM"],
-    "types": ["vite/client"],
+    // "types" schaltet die automatische Aufnahme globaler Typpakete ab, also
+    // muss jedes hier stehen — sonst kennt tsc die Matcher von jest-dom nicht,
+    // obwohl sie zur Laufzeit da sind.
+    "types": ["vite/client", "@testing-library/jest-dom"],
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 

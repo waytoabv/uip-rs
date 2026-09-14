@@ -181,8 +181,15 @@ describe('ThreatMap', () => {
 
   it('renders one point of real data', async () => {
     stubFetch(POPULATED_ROUTES);
-    const { container } = render(() => <ThreatMap query="" onFilter={noopFilter} />);
-    await waitFor(() => expect(container.querySelectorAll('circle.point')).toHaveLength(1));
+    const { container, findByText, getByText } = render(() => (
+      <ThreatMap query="" onFilter={noopFilter} />
+    ));
+    // Der Zähler in der Kopfzeile sagt, dass der Punkt angekommen ist; im
+    // Heatmap-Modus wird er als Dichtefläche gezeichnet, nicht als Kreis.
+    await findByText(/1\s*Orte/);
+    // Im Cluster-Modus wird derselbe Punkt zum Kreis — das prüft beide Wege.
+    getByText('Cluster').click();
+    await waitFor(() => expect(container.querySelectorAll('circle').length).toBeGreaterThan(0));
   });
 });
 
@@ -194,6 +201,9 @@ describe('FlowView', () => {
     // graph the instant the component mounted, before this placeholder text
     // had any data-free path to fall back to.
     await findByText('Keine Flussdaten für die aktuelle Auswahl.');
+    // Die Zonenmatrix liegt hinter einem eigenen Reiter und ist deshalb erst
+    // nach dem Wechsel im DOM.
+    (await findByText('Zone Matrix')).click();
     await findByText('Kein Zonenverkehr für die aktuelle Auswahl.');
   });
 
@@ -202,6 +212,6 @@ describe('FlowView', () => {
     const { findByText, container } = render(() => <FlowView query="" onFilter={noopFilter} />);
     await findByText('10.0.0.5');
     await findByText('1.2.3.4');
-    await waitFor(() => expect(container.querySelectorAll('.sankey-link')).toHaveLength(1));
+    await waitFor(() => expect(container.querySelectorAll('.flow-link')).toHaveLength(1));
   });
 });
