@@ -1,8 +1,11 @@
+pub mod dashboard;
 pub mod export;
+pub mod flows;
 pub mod filters;
 pub mod logs;
 pub mod search;
 pub mod static_files;
+pub mod threats;
 pub mod stream;
 
 use axum::routing::get;
@@ -31,6 +34,12 @@ pub fn router(pool: PgPool, events: broadcast::Sender<Arc<LiveRow>>) -> Router {
         .route("/api/logs", get(logs::get_logs))
         .route("/api/stream", get(stream::sse_stream))
         .route("/api/export", get(export::export_csv))
+        .route("/api/stats", get(dashboard::get_stats))
+        .route("/api/stats/series", get(dashboard::get_series))
+        .route("/api/stats/top", get(dashboard::get_top))
+        .route("/api/threats/points", get(threats::get_points))
+        .route("/api/flows/sankey", get(flows::get_sankey))
+        .route("/api/flows/zones", get(flows::get_zones))
         .fallback(static_files::serve)
         .with_state(ApiState { pool, events })
 }

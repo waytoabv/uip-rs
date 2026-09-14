@@ -219,3 +219,33 @@ th {
 tbody tr:hover {
   background: var(--surface-hover);
 }
+
+/* ── Navigation und Ansichten ──────────────────────────────────────────── */
+.app-nav {
+  display: flex;
+  gap: 0.25rem;
+  flex: 1;
+}
+.app-nav button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom-color: var(--border);
+  padding: 0.35rem 0.75rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.app-nav button.active {
+  color: var(--fg);
+  border-color: var(--border);
+  border-bottom-color: var(--bg);
+  border-radius: 4px 4px 0 0;
+}
+.view-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+.view-placeholder {
+  color: var(--muted);
+  padding: 2rem 0;
+}
