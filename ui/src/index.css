@@ -1,8 +1,221 @@
+/* Helle Palette (Standard). Eine dunkle Palette überschreibt dieselben
+   Variablen weiter unten — einmal für eine getroffene Wahl
+   (`data-theme="dark"`), einmal für die Systemeinstellung ohne getroffene
+   Wahl. Eine getroffene Wahl gewinnt in beide Richtungen. */
 :root {
   color-scheme: light dark;
   font: 16px/1.4 ui-monospace, Consolas, monospace;
+
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #666666;
+  --border: #d7d7d7;
+  --surface: #f4f5f7;
+  --surface-hover: #eceef2;
+  --accent: #2563eb;
+  --accent-fg: #ffffff;
+  --danger-fg: #7a1f1f;
+  --danger-bg: #fde8e8;
+  --danger-border: #f3c2c2;
+  --input-bg: #ffffff;
+  --input-border: #c7c7c7;
+  --chip-bg: #e5e7eb;
+  --chip-fg: #111827;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #12141a;
+    --fg: #e6e8ec;
+    --muted: #9aa0aa;
+    --border: #2a2d36;
+    --surface: #1a1d24;
+    --surface-hover: #232732;
+    --accent: #3b82f6;
+    --accent-fg: #0b0d12;
+    --danger-fg: #f6a5a5;
+    --danger-bg: #2a1616;
+    --danger-border: #5a2a2a;
+    --input-bg: #1a1d24;
+    --input-border: #333844;
+    --chip-bg: #262b35;
+    --chip-fg: #e6e8ec;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #12141a;
+  --fg: #e6e8ec;
+  --muted: #9aa0aa;
+  --border: #2a2d36;
+  --surface: #1a1d24;
+  --surface-hover: #232732;
+  --accent: #3b82f6;
+  --accent-fg: #0b0d12;
+  --danger-fg: #f6a5a5;
+  --danger-bg: #2a1616;
+  --danger-border: #5a2a2a;
+  --input-bg: #1a1d24;
+  --input-border: #333844;
+  --chip-bg: #262b35;
+  --chip-fg: #e6e8ec;
 }
 
 body {
   margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+main {
+  padding: 1rem;
+}
+
+h1 {
+  font-size: 1.25rem;
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--surface-hover);
+}
+
+select,
+input {
+  font: inherit;
+  color: var(--fg);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.app-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  padding: 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.filter-input {
+  min-width: 8rem;
+}
+
+.filter-input-narrow {
+  min-width: 5rem;
+  width: 6rem;
+}
+
+.search-input {
+  flex: 1 1 20rem;
+}
+
+.csv-button {
+  display: inline-block;
+  color: var(--accent-fg);
+  background: var(--accent);
+  border-radius: 4px;
+  padding: 0.3rem 0.9rem;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.csv-button:hover {
+  opacity: 0.9;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--chip-bg);
+  color: var(--chip-fg);
+  border-radius: 999px;
+  padding: 0.15rem 0.4rem 0.15rem 0.7rem;
+  font-size: 0.85rem;
+}
+
+.chip-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.2rem;
+}
+
+.chip-close:hover {
+  color: var(--danger-fg);
+}
+
+.suspended-note {
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 0.75rem;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+tbody tr:hover {
+  background: var(--surface-hover);
 }

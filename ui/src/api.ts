@@ -23,8 +23,8 @@ export interface LogRow {
   threat_score: number | null;
 }
 
-export async function fetchLogs(limit = 100): Promise<LogRow[]> {
-  const res = await fetch(`/api/logs?limit=${limit}`);
+export async function fetchLogs(query = ''): Promise<LogRow[]> {
+  const res = await fetch(`/api/logs${query ? `?${query}` : ''}`);
   const body = await res.json();
   return body.rows as LogRow[];
 }
