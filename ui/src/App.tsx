@@ -1,21 +1,24 @@
-import { createEffect, createMemo, createSignal, For, Match, Switch } from 'solid-js';
+import { createEffect, createMemo, createSignal, Match, Switch } from 'solid-js';
 import Dashboard from './Dashboard';
 import FilterBar from './FilterBar';
 import FlowView from './FlowView';
 import LogsView from './LogsView';
+import ShellHeader, { type NavTab } from './ShellHeader';
 import ThreatMap from './ThreatMap';
 import { emptyFilters, toQuery, type FilterState } from './filters';
 
 const THEME_KEY = 'uip-theme';
 
 type Theme = 'light' | 'dark';
-type View = 'logs' | 'dashboard' | 'map' | 'flows';
+type View = 'logs' | 'flows' | 'map' | 'dashboard';
 
-const VIEWS: { id: View; label: string }[] = [
-  { id: 'logs', label: 'Logs' },
+// Reihenfolge und Beschriftung wie in der Vorlage: Log Stream, Flow View,
+// Threat Map, Dashboard.
+const TABS: readonly NavTab<View>[] = [
+  { id: 'logs', label: 'Log Stream' },
+  { id: 'flows', label: 'Flow View' },
+  { id: 'map', label: 'Threat Map' },
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'map', label: 'Karte' },
-  { id: 'flows', label: 'Flüsse' },
 ];
 
 function storedTheme(): Theme | null {
@@ -59,42 +62,25 @@ export default function App() {
   const toggleTheme = () => setTheme(effectiveTheme() === 'dark' ? 'light' : 'dark');
 
   return (
-    <main>
-      <header class="app-header">
-        <h1>uip</h1>
-        <nav class="app-nav">
-          <For each={VIEWS}>
-            {(v) => (
-              <button
-                classList={{ active: view() === v.id }}
-                onClick={() => setView(v.id)}
-              >
-                {v.label}
-              </button>
-            )}
-          </For>
-        </nav>
-        <div class="app-actions">
-          <button onClick={toggleTheme}>
-            {effectiveTheme() === 'dark' ? 'Helles Design' : 'Dunkles Design'}
-          </button>
-        </div>
-      </header>
+    <div class="flex h-dvh flex-col bg-gray-950">
+      <ShellHeader tabs={TABS} activeView={view()} onSelectView={setView} theme={effectiveTheme()} onToggleTheme={toggleTheme} />
       <FilterBar filters={filters()} onChange={setFilters} />
-      <Switch>
-        <Match when={view() === 'logs'}>
-          <LogsView query={query()} />
-        </Match>
-        <Match when={view() === 'dashboard'}>
-          <Dashboard query={query()} onFilter={applyFilter} />
-        </Match>
-        <Match when={view() === 'map'}>
-          <ThreatMap query={query()} onFilter={applyFilter} />
-        </Match>
-        <Match when={view() === 'flows'}>
-          <FlowView query={query()} onFilter={applyFilter} />
-        </Match>
-      </Switch>
-    </main>
+      <main class="flex-1 overflow-auto">
+        <Switch>
+          <Match when={view() === 'logs'}>
+            <LogsView query={query()} />
+          </Match>
+          <Match when={view() === 'dashboard'}>
+            <Dashboard query={query()} onFilter={applyFilter} />
+          </Match>
+          <Match when={view() === 'map'}>
+            <ThreatMap query={query()} onFilter={applyFilter} />
+          </Match>
+          <Match when={view() === 'flows'}>
+            <FlowView query={query()} onFilter={applyFilter} />
+          </Match>
+        </Switch>
+      </main>
+    </div>
   );
 }
