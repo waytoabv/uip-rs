@@ -1,3 +1,4 @@
+pub mod export;
 pub mod filters;
 pub mod logs;
 pub mod search;
@@ -29,6 +30,7 @@ pub fn router(pool: PgPool, events: broadcast::Sender<Arc<LiveRow>>) -> Router {
         .route("/api/health", get(|| async { "ok" }))
         .route("/api/logs", get(logs::get_logs))
         .route("/api/stream", get(stream::sse_stream))
+        .route("/api/export", get(export::export_csv))
         .fallback(static_files::serve)
         .with_state(ApiState { pool, events })
 }
