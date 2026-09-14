@@ -21,10 +21,12 @@ export type SNode = SankeyNode<NodeDatum, LinkExtra>;
 export type SLink = SankeyLink<NodeDatum, LinkExtra>;
 
 // SVG-Koordinatenraum des Sankey; skaliert per viewBox auf jede Breite.
-// MARGIN gibt den Beschriftungen der äußeren Spalten Platz.
+// MARGIN gibt den Beschriftungen der äußeren Spalten Platz, HEADER_HEIGHT
+// der Spaltenüberschrift (Quelle/Dienst/Ziel) oberhalb der Knoten.
 export const WIDTH = 760;
 export const HEIGHT = 420;
 export const MARGIN = 100;
+export const HEADER_HEIGHT = 28;
 
 /**
  * Rechnet das Sankey-Layout.
@@ -45,7 +47,7 @@ export function computeLayout(data: SankeyResponse): { nodes: SNode[]; links: SL
     .nodeWidth(14)
     .nodePadding(10)
     .extent([
-      [MARGIN, 8],
+      [MARGIN, HEADER_HEIGHT],
       [WIDTH - MARGIN, HEIGHT - 8],
     ]);
   return gen({
