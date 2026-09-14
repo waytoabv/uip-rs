@@ -1,27 +1,20 @@
 import { createEffect, createMemo, createSignal, For, type Component } from 'solid-js';
 import { scaleLinear } from 'd3-scale';
-import { sankey, sankeyLinkHorizontal, type SankeyLink, type SankeyNode } from 'd3-sankey';
+import { sankeyLinkHorizontal } from 'd3-sankey';
+import {
+  computeLayout,
+  HEIGHT,
+  WIDTH,
+  type LinkExtra,
+  type NodeDatum,
+  type SankeyResponse,
+  type SLink,
+  type SNode,
+} from './sankeyLayout';
 
 interface Props {
   query: string;
   onFilter: (patch: Record<string, string>) => void;
-}
-
-interface NodeDatum {
-  id: string;
-  label: string;
-  kind: 'source' | 'service' | 'destination';
-}
-
-interface LinkExtra {
-  blocked: number;
-}
-
-type RawLink = LinkExtra & { source: number; target: number; value: number };
-
-interface SankeyResponse {
-  nodes: NodeDatum[];
-  links: RawLink[];
 }
 
 interface ZoneCell {
@@ -36,9 +29,6 @@ interface ZonesResponse {
   cells: ZoneCell[];
 }
 
-type SNode = SankeyNode<NodeDatum, LinkExtra>;
-type SLink = SankeyLink<NodeDatum, LinkExtra>;
-
 async function fetchSankey(query: string): Promise<SankeyResponse> {
   const res = await fetch(`/api/flows/sankey${query ? `?${query}` : ''}`);
   return (await res.json()) as SankeyResponse;
@@ -49,29 +39,8 @@ async function fetchZones(query: string): Promise<ZonesResponse> {
   return (await res.json()) as ZonesResponse;
 }
 
-// SVG-Koordinatenraum des Sankey; skaliert per viewBox auf jede Breite.
-// MARGIN gibt den Beschriftungen der äußeren Spalten Platz, ohne dass sie
-// abgeschnitten werden.
-const WIDTH = 760;
-const HEIGHT = 420;
-const MARGIN = 100;
-
 function isOther(n: { id: string }): boolean {
   return n.id.endsWith(':__other__');
-}
-
-function computeLayout(data: SankeyResponse) {
-  const gen = sankey<NodeDatum, LinkExtra>()
-    .nodeWidth(14)
-    .nodePadding(10)
-    .extent([
-      [MARGIN, 8],
-      [WIDTH - MARGIN, HEIGHT - 8],
-    ]);
-  return gen({
-    nodes: data.nodes.map((n) => ({ ...n })),
-    links: data.links.map((l) => ({ ...l })),
-  });
 }
 
 const linkPath = sankeyLinkHorizontal<NodeDatum, LinkExtra>();
