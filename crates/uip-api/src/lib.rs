@@ -1,3 +1,4 @@
+pub mod filters;
 pub mod logs;
 pub mod search;
 pub mod static_files;
