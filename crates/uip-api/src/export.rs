@@ -1,3 +1,4 @@
+use crate::error::ApiError;
 use crate::filters::LogFilter;
 use axum::body::Body;
 use axum::extract::{Query, State};
@@ -20,7 +21,10 @@ fn name(table: &[&'static str], id: Option<i16>) -> Option<&'static str> {
 /// Limit einmal steigt, ist `Body::from_stream` mit einem `sqlx`-Cursor
 /// (`fetch` statt `fetch_all`) der nächste Schritt, keine vorzeitige
 /// Optimierung heute.
-pub async fn export_csv(State(pool): State<PgPool>, Query(filter): Query<LogFilter>) -> Response<Body> {
+pub async fn export_csv(
+    State(pool): State<PgPool>,
+    Query(filter): Query<LogFilter>,
+) -> Result<Response<Body>, ApiError> {
     let mut qb = sqlx::QueryBuilder::new(
         "SELECT l.timestamp, l.log_type_id, l.direction_id, l.rule_action_id,
                 r.name AS rule_name, ii.name AS iface_in, io.name AS iface_out,
@@ -34,7 +38,7 @@ pub async fn export_csv(State(pool): State<PgPool>, Query(filter): Query<LogFilt
     filter.push_joins(&mut qb);
     filter.push_where(&mut qb);
     qb.push(" ORDER BY l.timestamp DESC LIMIT 100000");
-    let rows = qb.build().fetch_all(&pool).await.unwrap_or_default();
+    let rows = qb.build().fetch_all(&pool).await?;
 
     let mut w = csv::Writer::from_writer(Vec::new());
     let _ = w.write_record([
@@ -75,12 +79,12 @@ pub async fn export_csv(State(pool): State<PgPool>, Query(filter): Query<LogFilt
     let _ = w.flush();
     let body = w.into_inner().unwrap_or_default();
 
-    Response::builder()
+    Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
         .header(header::CONTENT_DISPOSITION, "attachment; filename=\"uip-logs.csv\"")
         .body(Body::from(body))
-        .unwrap()
+        .unwrap())
 }
 
 #[cfg(test)]
@@ -116,5 +120,17 @@ mod tests {
         // Ein Komma im Regelnamen darf die Spalten nicht verschieben.
         assert!(lines[1].contains("\"A,B\""), "Regelname nicht maskiert: {:?}", lines[1]);
         assert!(!lines[1].contains("10.0.0.9"));
+    }
+
+    /// Eine tote Datenbank muss als Fehler ankommen, nicht als leere CSV.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_dead_database_is_reported_not_hidden(pool: sqlx::PgPool) {
+        let app = crate::router(pool.clone(), tokio::sync::broadcast::channel(8).0);
+        pool.close().await;
+        let res = app
+            .oneshot(Request::get("/api/export").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

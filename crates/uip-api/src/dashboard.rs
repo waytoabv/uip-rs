@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 
+use crate::error::ApiError;
 use crate::filters::LogFilter;
 
 const LOG_TYPES: [&str; 5] = ["firewall", "dns", "dhcp", "wifi", "system"];
@@ -62,31 +63,32 @@ async fn fetch_threats(pool: &PgPool, f: &LogFilter) -> Result<i64, sqlx::Error>
     Ok(row.get("n"))
 }
 
-pub async fn get_stats(State(pool): State<PgPool>, Query(f): Query<LogFilter>) -> Json<Value> {
+pub async fn get_stats(
+    State(pool): State<PgPool>,
+    Query(f): Query<LogFilter>,
+) -> Result<Json<Value>, ApiError> {
     // Vier unabhängige Aggregate über denselben Pool (zehn Verbindungen) —
     // nacheinander ausgeführt würden sich ihre Laufzeiten addieren.
-    let joined = tokio::try_join!(
+    let ((total, allowed, blocked), by_type_rows, unique_sources, threats) = tokio::try_join!(
         fetch_counts(&pool, &f),
         fetch_by_type(&pool, &f),
         fetch_unique_sources(&pool, &f),
         fetch_threats(&pool, &f),
-    );
-    let ((total, allowed, blocked), by_type_rows, unique_sources, threats) =
-        joined.unwrap_or_default();
+    )?;
 
     let by_type: serde_json::Map<String, Value> = by_type_rows
         .into_iter()
         .filter_map(|(id, n)| log_type_name(id).map(|name| (name.to_string(), json!(n))))
         .collect();
 
-    Json(json!({
+    Ok(Json(json!({
         "total": total,
         "blocked": blocked,
         "allowed": allowed,
         "by_type": Value::Object(by_type),
         "unique_sources": unique_sources,
         "threats": threats,
-    }))
+    })))
 }
 
 /// Mirrors the suffix parsing of `filters::range_start` (private there, and
@@ -130,7 +132,10 @@ fn bucket_width(window: Duration) -> &'static str {
     }
 }
 
-pub async fn get_series(State(pool): State<PgPool>, Query(f): Query<LogFilter>) -> Json<Value> {
+pub async fn get_series(
+    State(pool): State<PgPool>,
+    Query(f): Query<LogFilter>,
+) -> Result<Json<Value>, ApiError> {
     let width = bucket_width(window_duration(&f));
 
     let mut qb = sqlx::QueryBuilder::new("SELECT time_bucket(");
@@ -144,7 +149,7 @@ pub async fn get_series(State(pool): State<PgPool>, Query(f): Query<LogFilter>) 
     f.push_joins(&mut qb);
     f.push_where(&mut qb);
     qb.push(" GROUP BY bucket ORDER BY bucket");
-    let rows = qb.build().fetch_all(&pool).await.unwrap_or_default();
+    let rows = qb.build().fetch_all(&pool).await?;
 
     let points: Vec<Value> = rows
         .iter()
@@ -158,7 +163,7 @@ pub async fn get_series(State(pool): State<PgPool>, Query(f): Query<LogFilter>) 
         })
         .collect();
 
-    Json(json!({ "bucket": width, "points": points }))
+    Ok(Json(json!({ "bucket": width, "points": points })))
 }
 
 #[derive(Deserialize)]
@@ -182,7 +187,10 @@ fn row_json(key: Option<String>, label: Option<String>, count: i64, extra: Value
     }))
 }
 
-pub async fn get_top(State(pool): State<PgPool>, Query(q): Query<TopQuery>) -> Json<Value> {
+pub async fn get_top(
+    State(pool): State<PgPool>,
+    Query(q): Query<TopQuery>,
+) -> Result<Json<Value>, ApiError> {
     let limit = q.limit.unwrap_or(10).clamp(1, 100);
     let f = &q.filter;
 
@@ -200,8 +208,7 @@ pub async fn get_top(State(pool): State<PgPool>, Query(q): Query<TopQuery>) -> J
             qb.push_bind(limit);
             qb.build()
                 .fetch_all(&pool)
-                .await
-                .unwrap_or_default()
+                .await?
                 .into_iter()
                 .filter_map(|r| {
                     let key: Option<String> = r.get("key");
@@ -224,8 +231,7 @@ pub async fn get_top(State(pool): State<PgPool>, Query(q): Query<TopQuery>) -> J
             qb.push_bind(limit);
             qb.build()
                 .fetch_all(&pool)
-                .await
-                .unwrap_or_default()
+                .await?
                 .into_iter()
                 .filter_map(|r| {
                     let key: Option<String> = r.get("key");
@@ -247,8 +253,7 @@ pub async fn get_top(State(pool): State<PgPool>, Query(q): Query<TopQuery>) -> J
             qb.push_bind(limit);
             qb.build()
                 .fetch_all(&pool)
-                .await
-                .unwrap_or_default()
+                .await?
                 .into_iter()
                 .filter_map(|r| {
                     let port: Option<i32> = r.get("port");
@@ -268,8 +273,7 @@ pub async fn get_top(State(pool): State<PgPool>, Query(q): Query<TopQuery>) -> J
             qb.push_bind(limit);
             qb.build()
                 .fetch_all(&pool)
-                .await
-                .unwrap_or_default()
+                .await?
                 .into_iter()
                 .filter_map(|r| {
                     let id: Option<i16> = r.get("id");
@@ -307,8 +311,7 @@ pub async fn get_top(State(pool): State<PgPool>, Query(q): Query<TopQuery>) -> J
             qb.push_bind(limit);
             qb.build()
                 .fetch_all(&pool)
-                .await
-                .unwrap_or_default()
+                .await?
                 .into_iter()
                 .filter_map(|r| {
                     let name: Option<String> = r.get("name");
@@ -330,8 +333,7 @@ pub async fn get_top(State(pool): State<PgPool>, Query(q): Query<TopQuery>) -> J
             qb.push_bind(limit);
             qb.build()
                 .fetch_all(&pool)
-                .await
-                .unwrap_or_default()
+                .await?
                 .into_iter()
                 .filter_map(|r| {
                     let num: Option<i32> = r.get("num");
@@ -355,8 +357,7 @@ pub async fn get_top(State(pool): State<PgPool>, Query(q): Query<TopQuery>) -> J
             qb.push_bind(limit);
             qb.build()
                 .fetch_all(&pool)
-                .await
-                .unwrap_or_default()
+                .await?
                 .into_iter()
                 .filter_map(|r| {
                     let key: Option<String> = r.get("key");
@@ -371,7 +372,7 @@ pub async fn get_top(State(pool): State<PgPool>, Query(q): Query<TopQuery>) -> J
         _ => Vec::new(),
     };
 
-    Json(json!({ "rows": rows }))
+    Ok(Json(json!({ "rows": rows })))
 }
 
 #[cfg(test)]
@@ -502,5 +503,40 @@ mod tests {
         let total_blocked: i64 = points.iter().map(|p| p["blocked"].as_i64().unwrap()).sum();
         assert_eq!(total_allowed, 1);
         assert_eq!(total_blocked, 1);
+    }
+
+    /// Eine tote Datenbank muss als Fehler ankommen, nicht als Nullen und
+    /// leere Listen — sonst sieht ein Ausfall wie eine ruhige Nacht aus.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn stats_reports_a_dead_database_instead_of_hiding_it(pool: sqlx::PgPool) {
+        let app = crate::router(pool.clone(), tokio::sync::broadcast::channel(8).0);
+        pool.close().await;
+        let res = app
+            .oneshot(Request::get("/api/stats").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn series_reports_a_dead_database_instead_of_hiding_it(pool: sqlx::PgPool) {
+        let app = crate::router(pool.clone(), tokio::sync::broadcast::channel(8).0);
+        pool.close().await;
+        let res = app
+            .oneshot(Request::get("/api/stats/series").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn top_reports_a_dead_database_instead_of_hiding_it(pool: sqlx::PgPool) {
+        let app = crate::router(pool.clone(), tokio::sync::broadcast::channel(8).0);
+        pool.close().await;
+        let res = app
+            .oneshot(Request::get("/api/stats/top?what=countries").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

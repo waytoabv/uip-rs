@@ -7,9 +7,13 @@ use axum::Json;
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 
+use crate::error::ApiError;
 use crate::filters::LogFilter;
 
-pub async fn get_points(State(pool): State<PgPool>, Query(f): Query<LogFilter>) -> Json<Value> {
+pub async fn get_points(
+    State(pool): State<PgPool>,
+    Query(f): Query<LogFilter>,
+) -> Result<Json<Value>, ApiError> {
     let mut points_qb = sqlx::QueryBuilder::new(
         "SELECT ROUND(l.geo_lat, 1)::float8 AS lat,
                 ROUND(l.geo_lon, 1)::float8 AS lon,
@@ -43,8 +47,7 @@ pub async fn get_points(State(pool): State<PgPool>, Query(f): Query<LogFilter>) 
     let (rows, blocked_total) = tokio::try_join!(
         points_qb.build().fetch_all(&pool),
         total_qb.build_query_scalar::<i64>().fetch_one(&pool),
-    )
-    .unwrap_or_default();
+    )?;
 
     let points: Vec<Value> = rows
         .iter()
@@ -61,7 +64,7 @@ pub async fn get_points(State(pool): State<PgPool>, Query(f): Query<LogFilter>) 
         })
         .collect();
 
-    Json(json!({ "points": points, "blocked_total": blocked_total }))
+    Ok(Json(json!({ "points": points, "blocked_total": blocked_total })))
 }
 
 #[cfg(test)]
@@ -197,5 +200,17 @@ mod tests {
         let points = body["points"].as_array().unwrap();
         assert_eq!(points.len(), 1);
         assert_eq!(points[0]["country"], "DE");
+    }
+
+    /// Eine tote Datenbank muss als Fehler ankommen, nicht als leere Karte.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_dead_database_is_reported_not_hidden(pool: sqlx::PgPool) {
+        let app = crate::router(pool.clone(), tokio::sync::broadcast::channel(8).0);
+        pool.close().await;
+        let res = app
+            .oneshot(Request::get("/api/threats/points").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

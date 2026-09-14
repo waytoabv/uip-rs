@@ -1,4 +1,5 @@
 pub mod dashboard;
+pub mod error;
 pub mod export;
 pub mod flows;
 pub mod filters;
