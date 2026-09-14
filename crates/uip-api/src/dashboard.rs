@@ -21,6 +21,15 @@ fn log_type_name(id: i16) -> Option<&'static str> {
     LOG_TYPES.get((id as usize).checked_sub(1)?).copied()
 }
 
+/// Same id scheme `logs.rs`/`export.rs` use for `direction_id`
+/// (inbound=1, outbound=2, local=3, inter_vlan=4, vpn=5, nat=6) — duplicated
+/// here rather than shared, since dashboard.rs may not touch those files.
+const DIRECTIONS: [&str; 6] = ["inbound", "outbound", "local", "inter_vlan", "vpn", "nat"];
+
+fn direction_name(id: i16) -> Option<&'static str> {
+    DIRECTIONS.get((id as usize).checked_sub(1)?).copied()
+}
+
 /// `total`/`allowed`/`blocked` in einer Abfrage — sie teilen sich ohnehin
 /// dieselben Joins und dasselbe WHERE, ein `COUNT(*) FILTER` je Bedingung ist
 /// billiger als drei getrennte Scans.
@@ -46,6 +55,18 @@ async fn fetch_by_type(pool: &PgPool, f: &LogFilter) -> Result<Vec<(i16, i64)>, 
     Ok(rows.iter().map(|r| (r.get("log_type_id"), r.get("n"))).collect())
 }
 
+/// Rows with a NULL `direction_id` are counted in the GROUP BY under their
+/// own NULL group but dropped by the caller — they simply aren't tagged with
+/// a direction yet, not a fake seventh key.
+async fn fetch_by_direction(pool: &PgPool, f: &LogFilter) -> Result<Vec<(Option<i16>, i64)>, sqlx::Error> {
+    let mut qb = sqlx::QueryBuilder::new("SELECT l.direction_id, COUNT(*) AS n FROM logs l ");
+    f.push_joins(&mut qb);
+    f.push_where(&mut qb);
+    qb.push(" GROUP BY l.direction_id");
+    let rows = qb.build().fetch_all(pool).await?;
+    Ok(rows.iter().map(|r| (r.get("direction_id"), r.get("n"))).collect())
+}
+
 async fn fetch_unique_sources(pool: &PgPool, f: &LogFilter) -> Result<i64, sqlx::Error> {
     let mut qb = sqlx::QueryBuilder::new("SELECT COUNT(DISTINCT l.src_ip) AS n FROM logs l ");
     f.push_joins(&mut qb);
@@ -67,11 +88,12 @@ pub async fn get_stats(
     State(pool): State<PgPool>,
     Query(f): Query<LogFilter>,
 ) -> Result<Json<Value>, ApiError> {
-    // Vier unabhängige Aggregate über denselben Pool (zehn Verbindungen) —
+    // Fünf unabhängige Aggregate über denselben Pool (zehn Verbindungen) —
     // nacheinander ausgeführt würden sich ihre Laufzeiten addieren.
-    let ((total, allowed, blocked), by_type_rows, unique_sources, threats) = tokio::try_join!(
+    let ((total, allowed, blocked), by_type_rows, by_direction_rows, unique_sources, threats) = tokio::try_join!(
         fetch_counts(&pool, &f),
         fetch_by_type(&pool, &f),
+        fetch_by_direction(&pool, &f),
         fetch_unique_sources(&pool, &f),
         fetch_threats(&pool, &f),
     )?;
@@ -81,11 +103,17 @@ pub async fn get_stats(
         .filter_map(|(id, n)| log_type_name(id).map(|name| (name.to_string(), json!(n))))
         .collect();
 
+    let by_direction: serde_json::Map<String, Value> = by_direction_rows
+        .into_iter()
+        .filter_map(|(id, n)| id.and_then(direction_name).map(|name| (name.to_string(), json!(n))))
+        .collect();
+
     Ok(Json(json!({
         "total": total,
         "blocked": blocked,
         "allowed": allowed,
         "by_type": Value::Object(by_type),
+        "by_direction": Value::Object(by_direction),
         "unique_sources": unique_sources,
         "threats": threats,
     })))
@@ -143,7 +171,8 @@ pub async fn get_series(
     qb.push(
         "::interval, l.timestamp) AS bucket,
                 COUNT(*) FILTER (WHERE l.rule_action_id = 1) AS allowed,
-                COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked
+                COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked,
+                COUNT(*) FILTER (WHERE l.rule_action_id = 3) AS redirect
          FROM logs l ",
     );
     f.push_joins(&mut qb);
@@ -159,6 +188,7 @@ pub async fn get_series(
                 "t": t.to_rfc3339(),
                 "allowed": r.get::<i64, _>("allowed"),
                 "blocked": r.get::<i64, _>("blocked"),
+                "redirect": r.get::<i64, _>("redirect"),
             })
         })
         .collect();
@@ -402,6 +432,7 @@ mod tests {
         assert_eq!(stats["unique_sources"], 0);
         assert_eq!(stats["threats"], 0);
         assert_eq!(stats["by_type"], serde_json::json!({}));
+        assert_eq!(stats["by_direction"], serde_json::json!({}));
 
         let series = get_json(&app, "/api/stats/series").await;
         assert!(series["points"].as_array().unwrap().is_empty());
@@ -503,6 +534,73 @@ mod tests {
         let total_blocked: i64 = points.iter().map(|p| p["blocked"].as_i64().unwrap()).sum();
         assert_eq!(total_allowed, 1);
         assert_eq!(total_blocked, 1);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn by_direction_counts_each_direction_and_drops_null_rows(pool: sqlx::PgPool) {
+        // inbound=1, outbound=2, local=3, inter_vlan=4, vpn=5, nat=6.
+        for (direction_id, n) in [(1, 2), (2, 3), (3, 1), (4, 4), (5, 1), (6, 2)] {
+            for _ in 0..n {
+                sqlx::query(
+                    "INSERT INTO logs (timestamp, log_type_id, direction_id, src_ip) VALUES (NOW(), 1, $1, '10.0.0.1')",
+                )
+                .bind(direction_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        }
+        // Zwei Zeilen ohne direction_id — nicht angereichert, dürfen unter
+        // keinem Schlüssel auftauchen.
+        for _ in 0..2 {
+            sqlx::query("INSERT INTO logs (timestamp, log_type_id, src_ip) VALUES (NOW(), 1, '10.0.0.2')")
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let app = app(pool);
+
+        let stats = get_json(&app, "/api/stats").await;
+        assert_eq!(stats["total"], 15, "13 mit Richtung plus 2 ohne");
+        let by_direction = stats["by_direction"].as_object().unwrap();
+        assert_eq!(by_direction.len(), 6, "genau die sechs bekannten Richtungen, keine NULL-Gruppe: {by_direction:?}");
+        assert_eq!(by_direction["inbound"], 2);
+        assert_eq!(by_direction["outbound"], 3);
+        assert_eq!(by_direction["local"], 1);
+        assert_eq!(by_direction["inter_vlan"], 4);
+        assert_eq!(by_direction["vpn"], 1);
+        assert_eq!(by_direction["nat"], 2);
+
+        // Derselbe Endpunkt, mit ?direction=inbound gefiltert: nur der eine Schlüssel bleibt übrig.
+        let filtered = get_json(&app, "/api/stats?direction=inbound").await;
+        assert_eq!(filtered["by_direction"], serde_json::json!({ "inbound": 2 }));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn series_reports_redirect_counts_and_zero_for_empty_buckets(pool: sqlx::PgPool) {
+        // action ids: allow=1, block=2, redirect=3.
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, rule_action_id, src_ip) VALUES
+                (NOW(), 1, 3, '10.0.0.1'),
+                (NOW(), 1, 3, '10.0.0.1'),
+                (NOW() - INTERVAL '5 minutes', 1, 1, '10.0.0.2')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let app = app(pool);
+
+        let series = get_json(&app, "/api/stats/series?range=1h").await;
+        let points = series["points"].as_array().unwrap();
+        assert_eq!(points.len(), 2, "zwei getrennte Minuten-Buckets erwartet: {points:?}");
+
+        let total_redirect: i64 = points.iter().map(|p| p["redirect"].as_i64().unwrap()).sum();
+        assert_eq!(total_redirect, 2);
+
+        // Der Bucket ohne redirect-Zeilen liefert eine echte 0, kein fehlendes Feld.
+        let bucket_without_redirect =
+            points.iter().find(|p| p["redirect"].as_i64() == Some(0)).expect("ein Bucket ohne redirect erwartet");
+        assert_eq!(bucket_without_redirect["allowed"], 1);
     }
 
     /// Eine tote Datenbank muss als Fehler ankommen, nicht als Nullen und
