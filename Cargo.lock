@@ -2534,6 +2534,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "async-trait",
+ "axum",
  "chrono",
  "hickory-resolver",
  "ipnetwork 0.20.0",
@@ -2543,6 +2544,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tower",
  "tracing",
  "uip-core",
 ]

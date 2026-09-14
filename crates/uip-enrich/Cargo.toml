@@ -18,3 +18,7 @@ arc-swap.workspace = true
 maxminddb.workspace = true
 hickory-resolver.workspace = true
 reqwest.workspace = true
+
+[dev-dependencies]
+axum = { workspace = true }
+tower = { version = "0.5", features = ["util"] }

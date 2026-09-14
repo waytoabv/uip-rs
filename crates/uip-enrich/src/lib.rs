@@ -1,3 +1,4 @@
+pub mod abuseipdb;
 pub mod geoip;
 pub mod rdns;
 pub mod target;
