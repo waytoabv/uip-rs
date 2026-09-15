@@ -260,6 +260,43 @@ function CategoriesCell(props: { categories: string[] | null }) {
 
 const WIDTHS_STORAGE_KEY = 'uip-log-column-widths';
 
+/**
+ * Die Vorgabebreite je Spalte, in Pixeln.
+ *
+ * Jede ist mindestens so breit wie ihre eigene Überschrift — `COUNTRY` in 64
+ * Pixeln, `ABUSEIPDB` in 80 und `PROTO` in 48 passten nicht und ragten in die
+ * Nachbarspalte hinein. An einer Stelle, weil die Summe daraus die Mindest-
+ * breite der Tabelle ergibt und beides sonst auseinanderläuft.
+ */
+const COLUMN_DEFAULTS: Record<string, number> = {
+  time: 80,
+  type: 96,
+  action: 80,
+  source: 160,
+  destination: 160,
+  country: 80,
+  asn: 144,
+  network: 112,
+  proto: 72,
+  service: 112,
+  rule_info: 192,
+  abuseipdb: 104,
+  categories: 160,
+};
+
+/** Die schmale Spalte mit dem Richtungspfeil — ohne Überschrift, nicht ziehbar. */
+const DIRECTION_COLUMN_WIDTH = 24;
+
+/** Welcher Schalter im „Columns"-Menü welche Spalte ein- und ausblendet. */
+const COLUMN_TOGGLE: Record<string, string> = {
+  country: 'country',
+  asn: 'asn',
+  proto: 'proto',
+  rule_info: 'rule',
+  abuseipdb: 'threat',
+  categories: 'categories',
+};
+
 function storedWidths(): Record<string, number> {
   try {
     const raw = localStorage.getItem(WIDTHS_STORAGE_KEY);
@@ -281,8 +318,8 @@ const [columnWidths, setColumnWidths] = createSignal<Record<string, number>>(sto
  * weg. Wer eine Spalte zu schmal findet, zieht sie breiter — die Wahl bleibt
  * über `localStorage` erhalten.
  */
-function Th(props: { key: string; label: string; default: number; center?: boolean }) {
-  const width = () => columnWidths()[props.key] ?? props.default;
+function Th(props: { key: string; label: string; center?: boolean }) {
+  const width = () => columnWidths()[props.key] ?? COLUMN_DEFAULTS[props.key];
 
   const startDrag = (e: MouseEvent) => {
     e.preventDefault();
@@ -310,7 +347,7 @@ function Th(props: { key: string; label: string; default: number; center?: boole
   return (
     <th
       style={{ width: `${width()}px` }}
-      class={`relative px-2 py-2 text-[12px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 ${
+      class={`relative truncate px-2 py-2 text-[12px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 ${
         props.center ? 'text-center' : ''
       }`}
     >
@@ -350,6 +387,26 @@ export default function LogsView(props: { query: string }) {
 
   const showCol = (key: string) => !hiddenColumns().has(key);
   const visibleColumnCount = () => COLUMN_COUNT - hiddenColumns().size;
+
+  /**
+   * Die Mindestbreite der Tabelle: die Summe der sichtbaren Spalten.
+   *
+   * Mit `table-fixed w-full` sind die Breiten nämlich nur Verhältnisse. Passt
+   * ihre Summe nicht ins Fenster, staucht der Browser alle proportional —
+   * so weit, dass `COUNTRY` in seine Spalte nicht mehr passt und über `ASN`
+   * liegt. Mit einer Mindestbreite gelten die Breiten wieder, und ein zu
+   * schmales Fenster scrollt seitwärts, statt die Tabelle unleserlich zu
+   * quetschen.
+   */
+  const tableMinWidth = () => {
+    const widths = columnWidths();
+    let sum = DIRECTION_COLUMN_WIDTH;
+    for (const key of Object.keys(COLUMN_DEFAULTS)) {
+      const toggle = COLUMN_TOGGLE[key];
+      if (!toggle || showCol(toggle)) sum += widths[key] ?? COLUMN_DEFAULTS[key];
+    }
+    return sum;
+  };
 
   function toggleColumn(key: string) {
     setHiddenColumns((prev) => {
@@ -539,32 +596,37 @@ export default function LogsView(props: { query: string }) {
 
       {/* Tabelle */}
       <div class="flex-1 overflow-auto">
-        <table class="w-full table-fixed text-left border-collapse">
+        <table
+          class="log-table w-full table-fixed text-left border-collapse"
+          style={{ 'min-width': `${tableMinWidth()}px` }}
+        >
           <thead class="sticky top-0 z-10 bg-gray-100 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
             <tr>
-              <Th key="time" label="Time" default={80} />
-              <Th key="type" label="Type" default={80} />
-              <Th key="action" label="Action" default={80} />
-              <Th key="source" label="Source" default={160} />
-              <th class="px-1 py-2 w-6"></th>
-              <Th key="destination" label="Destination" default={160} />
-              <Th key="country" label="Country" default={64} center />
+              <Th key="time" label="Time" />
+              <Th key="type" label="Type" />
+              <Th key="action" label="Action" />
+              <Th key="source" label="Source" />
+              <th class="px-1 py-2" style={{ width: `${DIRECTION_COLUMN_WIDTH}px` }}></th>
+              <Th key="destination" label="Destination" />
+              <Show when={showCol('country')}>
+                <Th key="country" label="Country" center />
+              </Show>
               <Show when={showCol('asn')}>
-                <Th key="asn" label="ASN" default={144} />
+                <Th key="asn" label="ASN" />
               </Show>
-              <Th key="network" label="Network" default={112} />
+              <Th key="network" label="Network" />
               <Show when={showCol('proto')}>
-                <Th key="proto" label="Proto" default={48} />
+                <Th key="proto" label="Proto" />
               </Show>
-              <Th key="service" label="Service" default={112} />
+              <Th key="service" label="Service" />
               <Show when={showCol('rule')}>
-                <Th key="rule_info" label="Rule / Info" default={192} />
+                <Th key="rule_info" label="Rule / Info" />
               </Show>
               <Show when={showCol('threat')}>
-                <Th key="abuseipdb" label="AbuseIPDB" default={80} />
+                <Th key="abuseipdb" label="AbuseIPDB" />
               </Show>
               <Show when={showCol('categories')}>
-                <Th key="categories" label="Categories" default={160} />
+                <Th key="categories" label="Categories" />
               </Show>
             </tr>
           </thead>
@@ -597,7 +659,7 @@ export default function LogsView(props: { query: string }) {
                       <>
                         <tr
                           onClick={() => setExpandedId((cur) => (cur === row.id ? null : row.id))}
-                          class={`cursor-pointer transition-colors hover:bg-gray-100 dark:hover:bg-gray-800/30 ${
+                          class={`log-row cursor-pointer transition-colors hover:bg-gray-100 dark:hover:bg-gray-800/30 ${
                             expanded() ? '' : 'border-b border-gray-200/50 dark:border-gray-800/50'
                           } ${tint ? 'bg-red-100/60 dark:bg-red-950/10' : ''}`}
                         >
@@ -627,9 +689,11 @@ export default function LogsView(props: { query: string }) {
                           <td class="px-2 py-1.5">
                             <AddressCell ip={row.dst_ip} port={row.dst_port} name={addressName(row, 'dst')} />
                           </td>
-                          <td class="px-2 py-1.5 text-center">
-                            <CountryCell code={row.geo_country} />
-                          </td>
+                          <Show when={showCol('country')}>
+                            <td class="px-2 py-1.5 text-center">
+                              <CountryCell code={row.geo_country} />
+                            </td>
+                          </Show>
                           <Show when={showCol('asn')}>
                             <td class="px-2 py-1.5">
                               <AsnCell name={row.asn_name} />
@@ -641,7 +705,9 @@ export default function LogsView(props: { query: string }) {
                           <Show when={showCol('proto')}>
                             <td class="px-2 py-1.5 text-[12px] text-gray-400 uppercase">{protocolName(row.protocol) ?? '—'}</td>
                           </Show>
-                          <td class="px-2 py-1.5 text-[12px] text-gray-400">{serviceFor(row)}</td>
+                          <td class="px-2 py-1.5 text-[12px] text-gray-400 truncate" title={serviceFor(row)}>
+                            {serviceFor(row)}
+                          </td>
                           <Show when={showCol('rule')}>
                             <td
                               class="px-2 py-1.5 text-[12px] text-gray-400 whitespace-nowrap max-w-[200px] truncate"
