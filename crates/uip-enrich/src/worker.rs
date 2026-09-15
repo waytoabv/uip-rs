@@ -1,5 +1,5 @@
 use crate::target::remote_ip;
-use crate::types::{GeoSource, IpFacts, RdnsSource, ThreatOutcome, ThreatSource};
+use crate::types::{GeoSource, IpFacts, Quota, RdnsSource, ThreatOutcome, ThreatSource};
 use chrono::{DateTime, Utc};
 use ipnetwork::IpNetwork;
 use sqlx::{PgPool, Row};
@@ -340,6 +340,29 @@ async fn write_back(
 
 /// Dauerläufer: arbeitet die Queue leer, wartet dann auf ein Signal vom
 /// Writer oder auf den Timer.
+/// Hält den Kontingentstand dort fest, wo die API ihn findet.
+///
+/// `system_config` ist der Kanal, den Ingest, Anreicherung und API sich ohnehin
+/// teilen; ein eigener Zustand im Router hieße, ihn durch jeden Konstruktor zu
+/// fädeln.
+async fn persist_quota(pool: &PgPool, q: Quota) {
+    let value = serde_json::json!({
+        "remaining": q.remaining,
+        "paused_until": q.paused_until,
+        "checked_at": Utc::now().to_rfc3339(),
+    });
+    let res = sqlx::query(
+        "INSERT INTO system_config (key, value, updated_at) VALUES ('abuseipdb_quota', $1, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+    )
+    .bind(value)
+    .execute(pool)
+    .await;
+    if let Err(e) = res {
+        tracing::warn!(error = %e, "could not persist the abuseipdb quota");
+    }
+}
+
 pub async fn run_worker(
     pool: PgPool,
     sources: Sources,
@@ -349,7 +372,18 @@ pub async fn run_worker(
     if let Err(e) = release_stale_claims(&pool).await {
         tracing::error!(error = %e, "could not release stale claims at startup");
     }
+    // Das zuletzt in `system_config` geschriebene Kontingent. Die Oberfläche
+    // liest es von dort, weil sie an die Quelle selbst nicht herankommt — und
+    // geschrieben wird nur, wenn sich der Wert ändert: sonst wäre es ein
+    // Schreibvorgang je Durchlauf für eine Zahl, die sich selten bewegt.
+    let mut last_quota: Option<Quota> = None;
     loop {
+        if let Some(q) = sources.threat.quota() {
+            if last_quota != Some(q) {
+                persist_quota(&pool, q).await;
+                last_quota = Some(q);
+            }
+        }
         match run_once(&pool, &sources, &excluded, BATCH_SIZE).await {
             Ok(0) => {
                 tokio::select! {

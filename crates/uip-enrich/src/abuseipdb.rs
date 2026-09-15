@@ -1,4 +1,4 @@
-use crate::types::{IpFacts, ThreatOutcome, ThreatSource};
+use crate::types::{IpFacts, Quota, ThreatOutcome, ThreatSource};
 use chrono::{DateTime, Utc};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -46,6 +46,17 @@ impl AbuseIpDb {
 
 #[async_trait::async_trait]
 impl ThreatSource for AbuseIpDb {
+    fn quota(&self) -> Option<Quota> {
+        // -1 ist der Anfangswert: es gab noch keine Antwort, aus der ein
+        // Kontingent hervorginge. Ohne Schlüssel fragen wir nie, also auch
+        // dann nichts zu melden.
+        let remaining = self.remaining.load(Ordering::Relaxed);
+        if !self.enabled() || remaining < 0 {
+            return None;
+        }
+        Some(Quota { remaining, paused_until: self.paused_until.load(Ordering::Relaxed) })
+    }
+
     async fn lookup(&self, ip: IpAddr) -> ThreatOutcome {
         if !self.enabled() {
             return ThreatOutcome::Disabled;

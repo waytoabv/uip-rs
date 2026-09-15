@@ -58,9 +58,28 @@ pub trait RdnsSource: Send + Sync {
     async fn lookup(&self, ip: IpAddr) -> Option<String>;
 }
 
+/// Was von einem Tageskontingent noch übrig ist.
+///
+/// Getrennt von `ThreatOutcome`, weil es die Quelle beschreibt und nicht eine
+/// einzelne Abfrage: die Oberfläche zeigt es an, ohne selbst zu fragen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Quota {
+    pub remaining: i64,
+    /// Unix-Sekunden, bis zu denen nach einem 429 pausiert wird. 0 = keine Pause.
+    pub paused_until: i64,
+}
+
 #[async_trait::async_trait]
 pub trait ThreatSource: Send + Sync {
     async fn lookup(&self, ip: IpAddr) -> ThreatOutcome;
+
+    /// Der Stand des Kontingents, falls die Quelle eines führt.
+    ///
+    /// `None` heißt „unbekannt" — vor der ersten Antwort, oder weil die Quelle
+    /// gar keins kennt. Ausdrücklich nicht dasselbe wie `Some(0)`.
+    fn quota(&self) -> Option<Quota> {
+        None
+    }
 }
 
 #[cfg(test)]

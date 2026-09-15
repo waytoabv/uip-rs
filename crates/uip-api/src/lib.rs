@@ -8,6 +8,7 @@ pub mod filters;
 pub mod logs;
 pub mod search;
 pub mod settings;
+pub mod status;
 pub mod services;
 pub mod static_files;
 pub mod threats;
@@ -36,6 +37,7 @@ impl axum::extract::FromRef<ApiState> for broadcast::Sender<Arc<LiveRow>> {
 pub fn router(pool: PgPool, events: broadcast::Sender<Arc<LiveRow>>) -> Router {
     Router::new()
         .route("/api/health", get(|| async { "ok" }))
+        .route("/api/status", get(status::get_status))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
         .route("/api/settings/pihole/test", get(settings::test_pihole))
         .route("/api/settings/unifi/test", get(settings::test_unifi))

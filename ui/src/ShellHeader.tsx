@@ -3,12 +3,10 @@ import { createSignal, For, onMount, type JSX } from 'solid-js';
 /**
  * Kopfzeile: Zeichen + Name, Reiter, Statusleiste.
  *
- * Für AbuseIPDB-Kontingent, MaxMind-Stand und den nächsten Abruf gibt es
- * noch keine Datenquelle — `/api/health` liefert nur "ok" als Klartext,
- * kein JSON mit diesen Feldern. Wir zeigen die Spalten trotzdem, mit „—"
- * statt sie wegzulassen: eine Leerstelle an erwarteter Stelle sagt „noch
- * nichts", eine fehlende Spalte sagt „gibt es nicht". Wird das Phase 4
- * nachliefert, ist hier nur der Platzhalter durch echte Werte zu ersetzen.
+ * Kontingent, GeoIP-Stand und der nächste Lauf kommen aus `/api/status`.
+ * Wo die Antwort `null` sagt, bleibt „—" stehen: die Quelle hat noch nichts
+ * gemeldet. Das ist ausdrücklich nicht dasselbe wie „0" oder „veraltet", und
+ * die Leiste darf den Unterschied nicht verwischen.
  */
 
 export interface NavTab<View extends string> {
@@ -36,6 +34,55 @@ async function fetchTotalLogs(): Promise<number | null> {
   }
 }
 
+interface Status {
+  abuseipdb: { remaining: number; paused_until: number } | null;
+  maxmind: { last_update: string | null; city: string | null; asn: string | null };
+  maxmind_next_update: { from: string; until: string };
+}
+
+async function fetchStatus(): Promise<Status | null> {
+  try {
+    const res = await fetch('/api/status');
+    if (!res.ok) return null;
+    return (await res.json()) as Status;
+  } catch {
+    return null;
+  }
+}
+
+/** Tagesdatum ohne Jahr — die Leiste hat keinen Platz, und das Jahr sagt hier nichts. */
+function shortDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+/** Ganze Tage seit `iso`, für die Alterswarnung. */
+function daysSince(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return Math.floor((Date.now() - d.getTime()) / 86_400_000);
+}
+
+/**
+ * Das Zeitfenster des nächsten Laufs, etwa „Mon 00–06".
+ *
+ * Ein Fenster, kein Zeitpunkt: der Timer streut den Start über sechs Stunden
+ * (siehe `crates/uip-api/src/status.rs`).
+ */
+function nextRun(window: Status['maxmind_next_update'] | undefined): string {
+  if (!window) return '—';
+  const from = new Date(window.from);
+  const until = new Date(window.until);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(until.getTime())) return '—';
+  const day = from.toLocaleDateString('en-GB', { weekday: 'short' });
+  const hh = (d: Date) => String(d.getHours()).padStart(2, '0');
+  return `${day} ${hh(from)}–${hh(until)}`;
+}
+
 async function pingHealth(): Promise<boolean> {
   try {
     const res = await fetch('/api/health');
@@ -52,15 +99,28 @@ function formatCount(n: number | null): string {
 export default function ShellHeader<View extends string>(props: Props<View>): JSX.Element {
   const [totalLogs, setTotalLogs] = createSignal<number | null>(null);
   const [alive, setAlive] = createSignal(true);
+  const [status, setStatus] = createSignal<Status | null>(null);
+
+  // Ein aufgebrauchtes Kontingent ist der Grund, warum Threat-Scores fehlen —
+  // das darf nicht dieselbe Farbe haben wie ein gesunder Stand.
+  const quotaSpent = () => {
+    const q = status()?.abuseipdb;
+    return q != null && (q.remaining === 0 || q.paused_until * 1000 > Date.now());
+  };
+  // GeoLite2 erscheint wöchentlich; einen Monat ohne Aktualisierung hat
+  // niemand absichtlich.
+  const geoStale = () => (daysSince(status()?.maxmind.last_update) ?? 0) > 30;
 
   onMount(() => {
     fetchTotalLogs().then(setTotalLogs);
     pingHealth().then(setAlive);
+    fetchStatus().then(setStatus);
     // Hält den Log-Zähler und den "lebt"-Punkt frisch, ohne dass jede
     // andere Ansicht davon wissen muss.
     const timer = window.setInterval(() => {
       fetchTotalLogs().then(setTotalLogs);
       pingHealth().then(setAlive);
+      fetchStatus().then(setStatus);
     }, 30_000);
     return () => window.clearInterval(timer);
   });
@@ -99,11 +159,36 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
 
       <div class="flex shrink-0 items-center gap-3">
         <div class="hidden items-center gap-3 md:flex">
-          <span class="text-xs text-gray-600 dark:text-gray-400">AbuseIPDB: {'—'}</span>
+          <span
+            class={`text-xs ${quotaSpent() ? 'text-amber-700 dark:text-amber-400' : 'text-gray-600 dark:text-gray-400'}`}
+            title={
+              status()?.abuseipdb == null
+                ? 'No AbuseIPDB response yet — no key, or nothing looked up so far'
+                : quotaSpent()
+                  ? 'Daily quota spent — threat scores resume after the reset'
+                  : 'Checks left in the current AbuseIPDB quota'
+            }
+          >
+            AbuseIPDB: {status()?.abuseipdb ? status()!.abuseipdb!.remaining.toLocaleString('en-GB') : '—'}
+          </span>
           <span class="text-xs text-gray-400 dark:text-gray-600">|</span>
-          <span class="text-xs text-gray-600 dark:text-gray-400">MaxMind: {'—'}</span>
+          <span
+            class={`text-xs ${geoStale() ? 'text-amber-700 dark:text-amber-400' : 'text-gray-600 dark:text-gray-400'}`}
+            title={
+              status()?.maxmind.last_update == null
+                ? 'No GeoLite2 database found in the configured directory'
+                : `City: ${shortDate(status()?.maxmind.city)} · ASN: ${shortDate(status()?.maxmind.asn)}`
+            }
+          >
+            MaxMind: {shortDate(status()?.maxmind.last_update)}
+          </span>
           <span class="text-xs text-gray-400 dark:text-gray-600">|</span>
-          <span class="text-xs text-gray-600 dark:text-gray-400">Next pull: {'—'}</span>
+          <span
+            class="text-xs text-gray-600 dark:text-gray-400"
+            title="Next GeoLite2 refresh — a window, because the timer spreads the start over six hours"
+          >
+            Next pull: {nextRun(status()?.maxmind_next_update)}
+          </span>
           <span class="text-xs text-gray-400 dark:text-gray-600">|</span>
           <span class="text-xs text-gray-600 dark:text-gray-400">{formatCount(totalLogs())}</span>
         </div>
