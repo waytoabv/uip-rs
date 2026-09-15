@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 uip-core = { path = "../uip-core" }
 uip-ingest = { path = "../uip-ingest" }
+uip-enrich = { path = "../uip-enrich" }
 axum = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }

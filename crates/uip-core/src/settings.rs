@@ -13,6 +13,9 @@ pub struct Settings {
     pub rdns_enabled: bool,
     pub abuseipdb_key: Option<String>,
     pub geoip_dir: PathBuf,
+    pub pihole_enabled: bool,
+    pub pihole_url: Option<String>,
+    pub pihole_password: Option<String>,
 }
 
 async fn get(pool: &PgPool, key: &str) -> Option<Value> {
@@ -87,12 +90,19 @@ impl Settings {
         let geoip_dir =
             text(pool, "geoip_dir", env("UIP_GEOIP_DIR"), "/var/lib/uip/geoip").await;
 
+        let pihole_enabled = get(pool, "pihole_enabled").await.and_then(|v| v.as_bool()).unwrap_or(false);
+        let pihole_url = get(pool, "pihole_url").await.and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty());
+        let pihole_password = get(pool, "pihole_password").await.and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty());
+
         Ok(Self {
             wan_ips,
             gateway_ips,
             rdns_enabled,
             abuseipdb_key: Some(abuseipdb_key).filter(|k| !k.is_empty()),
             geoip_dir: PathBuf::from(geoip_dir),
+            pihole_enabled,
+            pihole_url,
+            pihole_password,
         })
     }
 

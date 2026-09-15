@@ -2534,6 +2534,7 @@ dependencies = [
  "tower",
  "tracing",
  "uip-core",
+ "uip-enrich",
  "uip-ingest",
 ]
 

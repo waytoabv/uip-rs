@@ -26,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
 
     let cache = Arc::new(LookupCache::new());
     let (log_tx, log_rx) = tokio::sync::mpsc::channel(8192);
+    let pihole_tx = log_tx.clone();
     let (event_tx, _) = tokio::sync::broadcast::channel::<Arc<LiveRow>>(1024);
 
     let writer = tokio::spawn(uip_ingest::writer::run_writer(
@@ -69,6 +70,22 @@ async fn main() -> anyhow::Result<()> {
         uip_enrich::Exclusions(settings.exclusions()),
         wake_enricher,
     ));
+
+    // Pi-hole liefert DNS-Abfragen, die am Gateway-Syslog vorbeilaufen. Die
+    // Zeilen gehen in denselben Writer — dahinter ist es gewöhnliches DNS.
+    if settings.pihole_enabled {
+        match (&settings.pihole_url, &settings.pihole_password) {
+            (Some(url), password) if !url.is_empty() => {
+                let client = uip_enrich::pihole::Pihole::new(
+                    url.clone(),
+                    password.clone().unwrap_or_default(),
+                );
+                tracing::info!(url = %url, "pihole polling enabled");
+                tokio::spawn(uip_enrich::pihole::run_pihole(client, pihole_tx));
+            }
+            _ => tracing::warn!("pihole enabled but no url configured"),
+        }
+    }
 
     let app = uip_api::router(pool, event_tx);
     let listener = tokio::net::TcpListener::bind(&cfg.http_addr).await?;

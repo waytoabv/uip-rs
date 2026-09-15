@@ -4,6 +4,7 @@ import FilterBar from './FilterBar';
 import FlowView from './FlowView';
 import LogsView from './LogsView';
 import ShellHeader, { type NavTab } from './ShellHeader';
+import ShellSettings from './ShellSettings';
 import ThreatMap from './ThreatMap';
 import { describe, emptyFilters, toQuery, type FilterState } from './filters';
 
@@ -40,6 +41,7 @@ export default function App() {
   // startet sie dort eingeklappt. Wer sie aufklappt, behält sie beim
   // Ansichtswechsel nicht: die Vorgabe richtet sich nach der Ansicht.
   const [filtersOpen, setFiltersOpen] = createSignal(true);
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
 
   const showView = (v: View) => {
     setView(v);
@@ -73,7 +75,7 @@ export default function App() {
 
   return (
     <div class="flex h-dvh flex-col bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-200">
-      <ShellHeader tabs={TABS} activeView={view()} onSelectView={showView} theme={effectiveTheme()} onToggleTheme={toggleTheme} />
+      <ShellHeader tabs={TABS} activeView={view()} onSelectView={showView} theme={effectiveTheme()} onToggleTheme={toggleTheme} onOpenSettings={() => setSettingsOpen(true)} />
       <div class="flex items-center gap-2 border-b border-gray-200 px-4 py-1.5 dark:border-gray-800">
         <button
           type="button"
@@ -112,6 +114,9 @@ export default function App() {
           </Match>
         </Switch>
       </main>
+      <Show when={settingsOpen()}>
+        <ShellSettings onClose={() => setSettingsOpen(false)} />
+      </Show>
     </div>
   );
 }

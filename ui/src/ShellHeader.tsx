@@ -17,6 +17,7 @@ export interface NavTab<View extends string> {
 }
 
 interface Props<View extends string> {
+  onOpenSettings: () => void;
   tabs: readonly NavTab<View>[];
   activeView: View;
   onSelectView: (id: View) => void;
@@ -136,9 +137,9 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
 
         <button
           type="button"
-          disabled
-          class="cursor-not-allowed rounded p-1.5 text-gray-400 dark:text-gray-600 opacity-50"
-          title="Settings (Phase 4)"
+          onClick={() => props.onOpenSettings()}
+          class="rounded p-1.5 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          title="Settings"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"

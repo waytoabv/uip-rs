@@ -1,5 +1,6 @@
 pub mod abuseipdb;
 pub mod geoip;
+pub mod pihole;
 pub mod rdns;
 pub mod target;
 pub mod types;
