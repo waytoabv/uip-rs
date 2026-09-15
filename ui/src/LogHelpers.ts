@@ -6,12 +6,18 @@
 
 // ── Typ- und Aktions-Pillen ────────────────────────────────────────────────
 
+// Farbwerte für hellen Modus stammen aus der Vorlage
+// (`ui/src/index.css`, `[data-theme="light"]`-Block, im Fork-Repo): der
+// dunkle -400-Text ist auf weißem Grund zu blass, darum dort ein kräftigerer
+// Ton (600–900). Hintergrund und Rahmen bleiben meist gleich — die
+// Deckkraft der Vorlage weicht nur um wenige Prozentpunkte ab, was hier
+// nicht extra nachgebildet wird.
 const LOG_TYPE_PILL: Record<string, string> = {
-  firewall: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
-  dns: 'bg-violet-500/15 text-violet-400 border-violet-500/30',
-  dhcp: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30',
-  wifi: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-  system: 'bg-gray-500/15 text-gray-300 border-gray-500/30',
+  firewall: 'bg-blue-500/10 dark:bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30',
+  dns: 'bg-violet-500/10 dark:bg-violet-500/15 text-violet-700 dark:text-violet-400 border-violet-500/30',
+  dhcp: 'bg-cyan-500/10 dark:bg-cyan-500/15 text-cyan-700 dark:text-cyan-400 border-cyan-500/30',
+  wifi: 'bg-amber-500/10 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 border-amber-500/30',
+  system: 'bg-gray-500/15 text-gray-600 dark:text-gray-300 border-gray-500/30',
 };
 
 const DEFAULT_PILL = 'bg-gray-500/15 text-gray-400 border-gray-500/30';
@@ -23,9 +29,9 @@ export function logTypePillClass(logType: string | null | undefined): string {
 }
 
 const ACTION_PILL: Record<string, string> = {
-  allow: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-  block: 'bg-red-500/20 text-red-400 border-red-500/40',
-  redirect: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
+  allow: 'bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+  block: 'bg-red-500/10 dark:bg-red-500/20 text-red-600 dark:text-red-400 border-red-500/40',
+  redirect: 'bg-yellow-500/10 dark:bg-yellow-500/15 text-yellow-900 dark:text-yellow-400 border-yellow-500/30',
 };
 
 /** Tailwind-Klassen für die ACTION-Pille (auch für DHCP-/WLAN-Ereignisse als Ersatzwert). */
@@ -52,12 +58,12 @@ export function directionGlyph(direction: string | null | undefined): string {
 }
 
 const DIRECTION_COLOR: Record<string, string> = {
-  inbound: 'text-red-400',
-  outbound: 'text-blue-400',
+  inbound: 'text-red-600 dark:text-red-400',
+  outbound: 'text-blue-700 dark:text-blue-400',
   local: 'text-gray-400',
-  nat: 'text-yellow-400',
-  inter_vlan: 'text-gray-300',
-  vpn: 'text-teal-400',
+  nat: 'text-yellow-900 dark:text-yellow-400',
+  inter_vlan: 'text-gray-600 dark:text-gray-300',
+  vpn: 'text-teal-600 dark:text-teal-400',
 };
 
 /** Textfarbe für das Richtungszeichen. */
@@ -69,9 +75,11 @@ export function directionColorClass(direction: string | null | undefined): strin
 // ── Dienst aus Port/Protokoll ────────────────────────────────────────────────
 
 /**
- * Kleine, lokale Näherung an eine Dienst-Tabelle — das Original schlägt den
- * Namen serverseitig in einer gepflegten IANA-Tabelle nach; hier gibt es nur
- * die gebräuchlichsten Ports. Unbekannte Ports zeigen die nackte Portnummer.
+ * Kleine, lokale Näherung an eine Dienst-Tabelle — nur noch die Rückfallebene
+ * für Zeilen, die (noch) kein `service`-Feld vom Server tragen (etwa frisch
+ * über den Live-Stream eingetroffene Zeilen; siehe `LiveRow` in `uip-core`).
+ * `/api/logs` liefert `service` bereits fertig aufgelöst aus der gepflegten
+ * IANA-Tabelle (`crates/uip-api/src/services.rs`) — das hat immer Vorrang.
  */
 const WELL_KNOWN_PORTS: Record<number, string> = {
   20: 'FTP-DATA',
