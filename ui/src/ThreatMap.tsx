@@ -7,6 +7,7 @@ import { scaleLinear, scaleSqrt } from 'd3-scale';
 import { feature } from 'topojson-client';
 import type { Topology } from 'topojson-specification';
 import type { Feature, FeatureCollection, GeoJsonProperties, GeometryObject } from 'geojson';
+import { useIsDark } from './VizTheme';
 // Mitgelieferte TopoJSON, Teil des Bundles — im Betrieb geht dafür keine
 // einzige Anfrage nach außen ("Keine Karten-Kacheln von fremden Servern").
 import worldTopology from 'world-atlas/countries-110m.json';
@@ -50,13 +51,46 @@ const VIEWS: { id: ViewMode; label: string }[] = [
 
 // Fünf Stufen, absteigend nach Schwelle sortiert — passend zu einem
 // AbuseIPDB-artigen Confidence-Wert (0–100). Farben wie im Original:
-// Kritisch/Hoch/Mittel/Niedrig/Sauber.
+// Kritisch/Hoch/Mittel/Niedrig/Sauber. `text`/`dot` sind Tailwind-Klassen mit
+// `dark:`-Gegenstück (kippen von selbst mit dem Theme); `hex` speist die
+// SVG-Kreisfüllung direkt und braucht deshalb — kein CSS greift auf ein
+// Attribut — zwei feste Werte, siehe `levelHex`.
 const THREAT_LEVELS = [
-  { min: 75, label: 'Kritisch', text: 'text-red-400', dot: 'bg-red-400', hex: '#f87171' },
-  { min: 50, label: 'Hoch', text: 'text-orange-400', dot: 'bg-orange-400', hex: '#fb923c' },
-  { min: 25, label: 'Mittel', text: 'text-yellow-400', dot: 'bg-yellow-400', hex: '#facc15' },
-  { min: 1, label: 'Niedrig', text: 'text-blue-400', dot: 'bg-blue-400', hex: '#60a5fa' },
-  { min: 0, label: 'Sauber', text: 'text-emerald-400', dot: 'bg-emerald-400', hex: '#34d399' },
+  {
+    min: 75,
+    label: 'Kritisch',
+    text: 'text-red-600 dark:text-red-400',
+    dot: 'bg-red-600 dark:bg-red-400',
+    hex: { light: '#dc2626', dark: '#f87171' },
+  },
+  {
+    min: 50,
+    label: 'Hoch',
+    text: 'text-orange-600 dark:text-orange-400',
+    dot: 'bg-orange-600 dark:bg-orange-400',
+    hex: { light: '#ea580c', dark: '#fb923c' },
+  },
+  {
+    min: 25,
+    label: 'Mittel',
+    text: 'text-yellow-700 dark:text-yellow-400',
+    dot: 'bg-yellow-600 dark:bg-yellow-400',
+    hex: { light: '#ca8a04', dark: '#facc15' },
+  },
+  {
+    min: 1,
+    label: 'Niedrig',
+    text: 'text-blue-600 dark:text-blue-400',
+    dot: 'bg-blue-600 dark:bg-blue-400',
+    hex: { light: '#2563eb', dark: '#60a5fa' },
+  },
+  {
+    min: 0,
+    label: 'Sauber',
+    text: 'text-emerald-600 dark:text-emerald-400',
+    dot: 'bg-emerald-600 dark:bg-emerald-400',
+    hex: { light: '#059669', dark: '#34d399' },
+  },
 ];
 
 function levelFor(score: number | null | undefined): (typeof THREAT_LEVELS)[number] | null {
@@ -64,10 +98,15 @@ function levelFor(score: number | null | undefined): (typeof THREAT_LEVELS)[numb
   return THREAT_LEVELS.find((t) => score >= t.min) ?? THREAT_LEVELS[THREAT_LEVELS.length - 1];
 }
 
+function levelHex(level: (typeof THREAT_LEVELS)[number] | null, dark: boolean): string | null {
+  if (!level) return null;
+  return dark ? level.hex.dark : level.hex.light;
+}
+
 const ACTION_TEXT: Record<string, string> = {
-  block: 'text-red-400',
-  allow: 'text-emerald-400',
-  redirect: 'text-yellow-400',
+  block: 'text-red-600 dark:text-red-400',
+  allow: 'text-emerald-600 dark:text-emerald-400',
+  redirect: 'text-yellow-700 dark:text-yellow-400',
 };
 
 // Länder und Projektion sind pro Ladevorgang konstant — einmal auf
@@ -87,11 +126,23 @@ const countryShapes: { id: string; d: string }[] = worldCountries.features
 
 // Warme Rampe für die Heatmap-Ansicht — dieselben Farbstufen wie im Original
 // (gelb → orange → dunkelrot), hier über den normierten Anteil an der
-// größten Punktgröße statt über eine echte Dichteschätzung.
-const heatColor = scaleLinear<string>()
-  .domain([0, 0.05, 0.25, 0.5, 0.75, 1])
+// größten Punktgröße statt über eine echte Dichteschätzung. Zwei Rampen: die
+// helle liegt auf einer fast weißen Fläche (Ozean = `var(--bg)`) und braucht
+// dafür kräftigere, weniger transparente Stufen als die dunkle, sonst
+// verschwinden gerade die unteren Stufen.
+const HEAT_DOMAIN = [0, 0.05, 0.25, 0.5, 0.75, 1];
+const heatColorDark = scaleLinear<string>()
+  .domain(HEAT_DOMAIN)
   .range(['rgba(250,204,21,0.15)', 'rgba(250,204,21,0.5)', '#f59e0b', '#ef4444', '#dc2626', '#991b1b'])
   .clamp(true);
+const heatColorLight = scaleLinear<string>()
+  .domain(HEAT_DOMAIN)
+  .range(['rgba(202,138,4,0.25)', 'rgba(202,138,4,0.6)', '#ea580c', '#dc2626', '#b91c1c', '#7f1d1d'])
+  .clamp(true);
+const heatGradientCss = {
+  dark: 'linear-gradient(to right, rgba(250,204,21,0.3), #facc15, #f59e0b, #ef4444, #991b1b)',
+  light: 'linear-gradient(to right, rgba(202,138,4,0.35), #ca8a04, #ea580c, #dc2626, #7f1d1d)',
+};
 
 async function fetchPoints(query: string): Promise<PointsResponse> {
   const res = await fetch(`/api/threats/points${query ? `?${query}` : ''}`);
@@ -109,7 +160,7 @@ function Row(props: { label: string; value: JSX.Element | string | null | undefi
     <Show when={props.value}>
       <div class="flex items-baseline justify-between gap-2 py-0.5">
         <span class="shrink-0 text-xs text-gray-500">{props.label}</span>
-        <span class="truncate text-right text-xs text-gray-200">{props.value}</span>
+        <span class="truncate text-right text-xs text-gray-700 dark:text-gray-200">{props.value}</span>
       </div>
     </Show>
   );
@@ -117,7 +168,7 @@ function Row(props: { label: string; value: JSX.Element | string | null | undefi
 
 function Section(props: { title: string; children: JSX.Element }) {
   return (
-    <div class="border-t border-gray-800/50 px-3 py-2">
+    <div class="border-t border-gray-200/70 px-3 py-2 dark:border-gray-800/50">
       <div class="mb-1 text-xs uppercase tracking-wider text-gray-400">{props.title}</div>
       {props.children}
     </div>
@@ -132,7 +183,7 @@ function LogDetail(props: { log: LogRow; onBack: () => void }) {
       <button
         type="button"
         onClick={props.onBack}
-        class="flex shrink-0 items-center gap-1 border-b border-gray-800/50 px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200"
+        class="flex shrink-0 items-center gap-1 border-b border-gray-200/70 px-3 py-1.5 text-xs text-gray-400 hover:text-gray-700 dark:border-gray-800/50 dark:hover:text-gray-200"
       >
         ← Zurück zur Liste
       </button>
@@ -205,6 +256,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
   const [sidebarLogs, setSidebarLogs] = createSignal<LogRow[]>([]);
   const [sidebarLoading, setSidebarLoading] = createSignal(false);
   const [selectedLogId, setSelectedLogId] = createSignal<number | null>(null);
+  const isDark = useIsDark();
 
   // Ändert sich der geteilte Filter, lädt die Karte neu.
   createEffect(() => {
@@ -281,9 +333,9 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
   };
 
   const pointColor = (p: ThreatPoint) => {
-    if (viewMode() === 'heatmap') return heatColor(p.count / maxCount());
+    if (viewMode() === 'heatmap') return (isDark() ? heatColorDark : heatColorLight)(p.count / maxCount());
     const level = levelFor(p.max_threat);
-    return level ? level.hex : '#6b7280';
+    return levelHex(level, isDark()) ?? (isDark() ? '#6b7280' : '#9ca3af');
   };
 
   const tooltip = (p: ThreatPoint) => {
@@ -296,9 +348,9 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
   };
 
   return (
-    <div class="overflow-hidden rounded-lg border border-gray-800 bg-gray-950">
+    <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
       {/* Steuerzeile */}
-      <div class="flex flex-wrap items-center gap-3 border-b border-gray-800 px-4 py-2.5">
+      <div class="flex flex-wrap items-center gap-3 border-b border-gray-200 px-4 py-2.5 dark:border-gray-800">
         <div class="flex items-center gap-0.5">
           <For each={VIEWS}>
             {(v) => (
@@ -308,8 +360,8 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                 aria-pressed={viewMode() === v.id}
                 class={
                   viewMode() === v.id
-                    ? 'rounded border border-gray-600 bg-black px-2.5 py-1 text-xs font-medium text-white'
-                    : 'rounded border border-transparent px-2.5 py-1 text-xs font-medium text-gray-400 hover:text-gray-300'
+                    ? 'rounded border border-gray-300 bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-900 dark:border-gray-600 dark:bg-black dark:text-white'
+                    : 'rounded border border-transparent px-2.5 py-1 text-xs font-medium text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
                 }
               >
                 {v.label}
@@ -319,11 +371,11 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
         </div>
         <div class="ml-auto flex items-center gap-3 text-xs text-gray-400">
           <Show when={!loaded()}>
-            <span class="text-blue-400">Lädt…</span>
+            <span class="text-blue-600 dark:text-blue-400">Lädt…</span>
           </Show>
           <Show when={loaded()}>
             <span>{points().length.toLocaleString()} locations</span>
-            <span class="text-gray-700">|</span>
+            <span class="text-gray-300 dark:text-gray-700">|</span>
             <span>{totalEvents().toLocaleString()} Ereignisse</span>
           </Show>
         </div>
@@ -332,13 +384,26 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
       {/* Karte + Seitenleiste */}
       <div class="flex">
         <div class="relative min-w-0 flex-1">
-          <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="Karte des blockierten Verkehrs" class="block h-auto w-full bg-gray-950">
+          {/* Hintergrund und Landmasse über CSS-Variablen statt Tailwind-Klassen:
+              sie kippen von selbst mit dem Theme, ganz ohne JS. Die
+              Länderkontur bekommt `var(--bg)` als Umrandung — derselbe Trick
+              wie eine echte Karte: die Trennlinie zum "Ozean" ist einfach die
+              Ozeanfarbe selbst, hell wie dunkel. */}
+          <svg
+            viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+            role="img"
+            aria-label="Karte des blockierten Verkehrs"
+            class="block h-auto w-full"
+            style={{ background: 'var(--bg)' }}
+          >
             <defs>
               <filter id="threat-heat-blur" x="-100%" y="-100%" width="300%" height="300%">
                 <feGaussianBlur stdDeviation="6" />
               </filter>
             </defs>
-            <For each={countryShapes}>{(c) => <path d={c.d} class="fill-gray-800" stroke="#000000" stroke-width="0.5" />}</For>
+            <For each={countryShapes}>
+              {(c) => <path d={c.d} style={{ fill: 'var(--border)' }} stroke="var(--bg)" stroke-width="0.5" />}
+            </For>
             <g style={viewMode() === 'heatmap' ? { 'mix-blend-mode': 'screen' } : undefined}>
               <For each={projected()}>
                 {({ p, x, y }) => (
@@ -349,7 +414,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                     fill={pointColor(p)}
                     opacity={viewMode() === 'heatmap' ? 0.8 : p.max_threat != null ? 0.9 : 0.6}
                     filter={viewMode() === 'heatmap' ? 'url(#threat-heat-blur)' : undefined}
-                    stroke={isSelectedPoint(p) ? '#ffffff' : 'rgba(0,0,0,0.4)'}
+                    stroke={isSelectedPoint(p) ? 'var(--fg)' : 'rgba(0,0,0,0.4)'}
                     stroke-width={isSelectedPoint(p) ? 2 : 0.5}
                     class="cursor-pointer transition-opacity hover:opacity-100"
                     onClick={() => {
@@ -404,11 +469,13 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                 when={viewMode() === 'clusters'}
                 fallback={
                   <>
+                    {/* Die Legende selbst bleibt bewusst ein dunkler, fester
+                        Chip in beiden Themes (wie im Original) — die Rampe
+                        hier ist deshalb immer die dunkle Fassung, unabhängig
+                        von `pointColor()`, das auf der eigentlichen Karte
+                        zwischen hell/dunkel wechselt. */}
                     <div class="mb-1.5 text-[10px] uppercase tracking-wider text-gray-400">Ereignisdichte</div>
-                    <div
-                      class="h-2 w-28 rounded-full"
-                      style={{ background: 'linear-gradient(to right, rgba(250,204,21,0.3), #facc15, #f59e0b, #ef4444, #991b1b)' }}
-                    />
+                    <div class="h-2 w-28 rounded-full" style={{ background: heatGradientCss.dark }} />
                     <div class="mt-0.5 flex w-28 justify-between text-[9px] text-gray-500">
                       <span>Weniger</span>
                       <span>Mehr</span>
