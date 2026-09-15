@@ -42,13 +42,23 @@ export default function App() {
   // Ansichtswechsel nicht: die Vorgabe richtet sich nach der Ansicht.
   const [filtersOpen, setFiltersOpen] = createSignal(true);
   const [settingsOpen, setSettingsOpen] = createSignal(false);
+  // Der gerade getippte Suchbegriff. Er filtert schon mit, wird aber erst
+  // mit Enter zu einem übernommenen Begriff — sonst entstünde aus jedem
+  // Zwischenstand eine eigene Pille.
+  const [searchDraft, setSearchDraft] = createSignal('');
 
   const showView = (v: View) => {
     setView(v);
     setFiltersOpen(v === 'logs');
   };
 
-  const query = createMemo(() => toQuery(filters()));
+  const query = createMemo(() => {
+    const f = filters();
+    const d = searchDraft().trim();
+    if (!d) return toQuery(f);
+    const combined = [f.q.trim(), d].filter(Boolean).join(' ');
+    return toQuery({ ...f, q: combined });
+  });
 
   // Alle Ansichten teilen sich einen Filter: einmal filtern, aus vier
   // Blickwinkeln dieselbe Auswahl sehen. Ein Klick in Dashboard, Karte oder
@@ -96,7 +106,12 @@ export default function App() {
         </Show>
       </div>
       <Show when={filtersOpen()}>
-        <FilterBar filters={filters()} onChange={setFilters} />
+        <FilterBar
+          filters={filters()}
+          onChange={setFilters}
+          draft={searchDraft()}
+          onDraft={setSearchDraft}
+        />
       </Show>
       <main class="flex-1 overflow-auto">
         <Switch>

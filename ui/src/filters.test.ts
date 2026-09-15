@@ -5,6 +5,8 @@ import {
   DIRECTIONS,
   LOG_TYPES,
   describe,
+  removeTerm,
+  splitTerms,
   emptyFilters,
   isMultiActive,
   toggleMulti,
@@ -133,5 +135,33 @@ suite('describe — welche Filter einen Chip bekommen', () => {
 
   it('gibt für einen leeren Filter gar nichts zurück', () => {
     expect(describe(emptyFilters())).toEqual([]);
+  });
+});
+
+suite('splitTerms / removeTerm — jeder Begriff eine eigene Pille', () => {
+  it('trennt an Leerzeichen, hält Anführungen zusammen', () => {
+    expect(splitTerms('10.0.0.5 443 !tcp')).toEqual(['10.0.0.5', '443', '!tcp']);
+    expect(splitTerms('rule:"LAN to WAN" 443')).toEqual(['rule:"LAN to WAN"', '443']);
+  });
+
+  it('entfernt genau einen Begriff und lässt die übrigen stehen', () => {
+    expect(removeTerm('10.0.0.5 443 !tcp', '443')).toBe('10.0.0.5 !tcp');
+    // Ein Begriff mit Leerzeichen bleibt als Einheit entfernbar.
+    expect(removeTerm('rule:"LAN to WAN" 443', 'rule:"LAN to WAN"')).toBe('443');
+  });
+
+  it('erzeugt je Begriff eine Pille statt einer gemeinsamen', () => {
+    const chips = describe({ ...emptyFilters(), q: '10.0.0.5 443 !tcp' });
+    expect(chips).toHaveLength(3);
+    expect(chips.map((c: { label: string }) => c.label)).toEqual(['10.0.0.5', '443', '!tcp']);
+    // Jede trägt ihren Begriff mit, damit sie einzeln entfernt werden kann.
+    expect(chips.every((c: { term?: string }) => !!c.term)).toBe(true);
+  });
+
+  it('kommt mit leerem und mehrfach getrenntem Ausdruck zurecht', () => {
+    expect(splitTerms('')).toEqual([]);
+    expect(splitTerms('   ')).toEqual([]);
+    expect(splitTerms('a   b')).toEqual(['a', 'b']);
+    expect(removeTerm('a', 'a')).toBe('');
   });
 });

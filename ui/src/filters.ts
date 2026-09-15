@@ -172,6 +172,41 @@ export function toQuery(state: FilterState): string {
 export interface Chip {
   key: keyof FilterState;
   label: string;
+  /** Bei `q`: genau dieser eine Begriff, damit er einzeln entfernbar ist. */
+  term?: string;
+}
+
+/**
+ * Zerlegt einen Suchausdruck in seine Begriffe — dieselbe Regel wie der
+ * Parser im Backend (`crates/uip-api/src/search.rs`): Leerzeichen trennen,
+ * Anführungen halten zusammen.
+ *
+ * Nötig, weil jeder Begriff eine eigene Pille bekommt. Alle in eine zu
+ * werfen hieße, dass man drei Filter nur gemeinsam loswird.
+ */
+export function splitTerms(query: string): string[] {
+  const out: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (const c of query) {
+    if (c === '"') {
+      inQuotes = !inQuotes;
+      current += c;
+    } else if (/\s/.test(c) && !inQuotes) {
+      if (current) out.push(current);
+      current = '';
+    } else {
+      current += c;
+    }
+  }
+  if (current) out.push(current);
+  return out;
+}
+
+/** Entfernt genau einen Begriff aus einem Suchausdruck. */
+export function removeTerm(query: string, term: string): string {
+  const kept = splitTerms(query).filter((t) => t !== term);
+  return kept.join(' ');
 }
 
 const RANGE_LABELS: Record<string, string> = Object.fromEntries(
@@ -210,11 +245,23 @@ const NO_CHIP_FIELDS = new Set<keyof FilterState>(['log_type']);
 // Liefert je einen Chip für jeden aktiven Filter — zum Anzeigen und, über
 // den `key`, zum gezielten Löschen genau dieses einen Filters.
 export function describe(state: FilterState): Chip[] {
-  return (Object.keys(state) as (keyof FilterState)[])
-    .filter((key) => !NO_CHIP_FIELDS.has(key) && state[key].trim() !== '')
-    .map((key) => {
-      const raw = state[key];
-      const value = key === 'range' ? (RANGE_LABELS[raw] ?? raw) : raw;
-      return { key, label: `${FIELD_LABELS[key]}: ${value}` };
-    });
+  const chips: Chip[] = [];
+  for (const key of Object.keys(state) as (keyof FilterState)[]) {
+    if (NO_CHIP_FIELDS.has(key)) continue;
+    const raw = state[key].trim();
+    if (raw === '') continue;
+
+    // Die Suche ist kein einzelner Wert, sondern mehrere eigenständige
+    // Begriffe — jeder bekommt seine eigene Pille und lässt sich einzeln
+    // wegklicken.
+    if (key === 'q') {
+      for (const term of splitTerms(raw)) {
+        chips.push({ key, label: term, term });
+      }
+      continue;
+    }
+    const value = key === 'range' ? (RANGE_LABELS[raw] ?? raw) : raw;
+    chips.push({ key, label: `${FIELD_LABELS[key]}: ${value}` });
+  }
+  return chips;
 }

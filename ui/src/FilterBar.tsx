@@ -3,6 +3,7 @@ import FilterPanel from './FilterPanel';
 import {
   ACTIONS,
   describe,
+  removeTerm,
   DIRECTIONS,
   emptyFilters,
   isMultiActive,
@@ -15,6 +16,9 @@ import {
 interface Props {
   filters: FilterState;
   onChange: (next: FilterState) => void;
+  /** Der noch nicht übernommene Suchbegriff — filtert bereits mit. */
+  draft: string;
+  onDraft: (value: string) => void;
 }
 
 // Aktive Pille je Log-Typ — Original: bg-<farbe>-500/15 text-<farbe>-400
@@ -92,7 +96,19 @@ const FilterBar: Component<Props> = (props) => {
   // Der getippte Begriff lebt getrennt vom übernommenen Filter. Beide in
   // `q` zu halten machte im Fork jeden Zwischenstand zu einem eigenen
   // Begriff — aus "10.10.10.0/24" wurden fünf.
-  const [draft, setDraft] = createSignal('');
+  //
+  // Die Eingabe wird sofort angezeigt, aber verzögert nach oben gemeldet:
+  // sonst schickt jeder Tastendruck eine Abfrage los. Oben fließt sie in den
+  // Query-String ein und filtert die Liste schon beim Tippen vor; erst Enter
+  // macht daraus einen übernommenen Begriff mit eigener Pille.
+  const [typed, setTyped] = createSignal(props.draft);
+  let debounce: ReturnType<typeof setTimeout> | undefined;
+  const draft = typed;
+  const setDraft = (v: string) => {
+    setTyped(v);
+    clearTimeout(debounce);
+    debounce = setTimeout(() => props.onDraft(v), 250);
+  };
   const [showPanel, setShowPanel] = createSignal(false);
 
   // Wie viele Filter gerade wirken — die Zahl steht am Knopf, damit man
@@ -100,11 +116,13 @@ const FilterBar: Component<Props> = (props) => {
   const activeCount = () => describe(props.filters).length;
 
   const commitDraft = () => {
-    const term = draft().trim();
+    const term = typed().trim();
+    clearTimeout(debounce);
     if (!term) return;
     const existing = props.filters.q.trim();
+    setTyped('');
+    props.onDraft('');
     set('q', existing ? `${existing} ${term}` : term);
-    setDraft('');
   };
 
   return (
@@ -217,7 +235,12 @@ const FilterBar: Component<Props> = (props) => {
                     type="button"
                     aria-label={`Remove filter ${chip.label}`}
                     class="filter-chip-remove"
-                    onClick={() => set(chip.key, '')}
+                    onClick={() =>
+                      set(
+                        chip.key,
+                        chip.term ? removeTerm(props.filters.q, chip.term) : '',
+                      )
+                    }
                   >
                     ✕
                   </button>
@@ -228,7 +251,8 @@ const FilterBar: Component<Props> = (props) => {
               type="button"
               class="px-1.5 py-0.5 text-[11px] text-gray-500 hover:text-gray-900 dark:hover:text-gray-300"
               onClick={() => {
-                setDraft('');
+                setTyped('');
+                props.onDraft('');
                 props.onChange(emptyFilters());
               }}
             >

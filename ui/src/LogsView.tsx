@@ -257,6 +257,73 @@ function CategoriesCell(props: { categories: string[] | null }) {
   );
 }
 
+
+const WIDTHS_STORAGE_KEY = 'uip-log-column-widths';
+
+function storedWidths(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(WIDTHS_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+    return typeof parsed === 'object' && parsed ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+const [columnWidths, setColumnWidths] = createSignal<Record<string, number>>(storedWidths());
+
+/**
+ * Eine Kopfzelle mit fester, ziehbarer Breite.
+ *
+ * Feste Breiten sind hier kein Geschmack, sondern die Reparatur eines echten
+ * Ärgernisses: bei automatischer Breite bestimmt der Inhalt die Spalten, und
+ * jede neu eintreffende Zeile verschiebt die ganze Tabelle unter dem Zeiger
+ * weg. Wer eine Spalte zu schmal findet, zieht sie breiter — die Wahl bleibt
+ * über `localStorage` erhalten.
+ */
+function Th(props: { key: string; label: string; default: number; center?: boolean }) {
+  const width = () => columnWidths()[props.key] ?? props.default;
+
+  const startDrag = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = width();
+    const onMove = (ev: MouseEvent) => {
+      // Unter 40 Pixel ist eine Spalte nicht mehr lesbar, nur noch im Weg.
+      const next = Math.max(40, startW + ev.clientX - startX);
+      setColumnWidths((prev) => ({ ...prev, [props.key]: next }));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      try {
+        localStorage.setItem(WIDTHS_STORAGE_KEY, JSON.stringify(columnWidths()));
+      } catch {
+        // Kein Speicher (privates Fenster) — die Breite gilt dann nur jetzt.
+      }
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  return (
+    <th
+      style={{ width: `${width()}px` }}
+      class={`relative px-2 py-2 text-[12px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 ${
+        props.center ? 'text-center' : ''
+      }`}
+    >
+      {props.label}
+      <span
+        onMouseDown={startDrag}
+        title="Drag to resize"
+        class="absolute right-0 top-0 h-full w-1 cursor-col-resize select-none hover:bg-gray-400/50 dark:hover:bg-gray-500/50"
+      />
+    </th>
+  );
+}
+
 /** Die Log-Tabelle mit ihrem Live-Stream, seitenweise blätterbar über den Cursor der API. */
 export default function LogsView(props: { query: string }) {
   const [rows, setRows] = createSignal<LogEntry[]>([]);
@@ -472,40 +539,32 @@ export default function LogsView(props: { query: string }) {
 
       {/* Tabelle */}
       <div class="flex-1 overflow-auto">
-        <table class="w-full text-left border-collapse">
+        <table class="w-full table-fixed text-left border-collapse">
           <thead class="sticky top-0 z-10 bg-gray-100 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
             <tr>
-              <th class="px-3 py-2 w-20 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Time</th>
-              <th class="px-2 py-2 w-20 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Type</th>
-              <th class="px-2 py-2 w-20 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Action</th>
-              <th class="px-2 py-2 w-40 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Source</th>
+              <Th key="time" label="Time" default={80} />
+              <Th key="type" label="Type" default={80} />
+              <Th key="action" label="Action" default={80} />
+              <Th key="source" label="Source" default={160} />
               <th class="px-1 py-2 w-6"></th>
-              <th class="px-2 py-2 w-40 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Destination</th>
-              <th class="px-2 py-2 w-16 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider text-center">
-                Country
-              </th>
+              <Th key="destination" label="Destination" default={160} />
+              <Th key="country" label="Country" default={64} center />
               <Show when={showCol('asn')}>
-                <th class="px-2 py-2 w-36 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">ASN</th>
+                <Th key="asn" label="ASN" default={144} />
               </Show>
-              <th class="px-2 py-2 w-28 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Network</th>
+              <Th key="network" label="Network" default={112} />
               <Show when={showCol('proto')}>
-                <th class="px-2 py-2 w-12 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Proto</th>
+                <Th key="proto" label="Proto" default={48} />
               </Show>
-              <th class="px-2 py-2 w-28 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Service</th>
+              <Th key="service" label="Service" default={112} />
               <Show when={showCol('rule')}>
-                <th class="px-2 py-2 w-48 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">
-                  Rule / Info
-                </th>
+                <Th key="rule_info" label="Rule / Info" default={192} />
               </Show>
               <Show when={showCol('threat')}>
-                <th class="px-2 py-2 w-20 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">
-                  AbuseIPDB
-                </th>
+                <Th key="abuseipdb" label="AbuseIPDB" default={80} />
               </Show>
               <Show when={showCol('categories')}>
-                <th class="px-2 py-2 w-40 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">
-                  Categories
-                </th>
+                <Th key="categories" label="Categories" default={160} />
               </Show>
             </tr>
           </thead>
