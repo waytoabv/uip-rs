@@ -19,6 +19,11 @@ pub struct LogFilter {
     pub proto: Vec<String>,
     #[serde(deserialize_with = "comma_list")]
     pub country: Vec<String>,
+    /// Genau die eingehende Schnittstelle. `iface` trifft beide Seiten und
+    /// taugt deshalb nicht, um ein Zonenpaar (von X nach Y) zu beschreiben.
+    pub iface_in: Option<String>,
+    /// Genau die ausgehende Schnittstelle.
+    pub iface_out: Option<String>,
     pub port: Option<i32>,
     pub threat_min: Option<i32>,
     pub from: Option<DateTime<Utc>>,
@@ -76,6 +81,8 @@ impl LogFilter {
             && self.iface.is_empty()
             && self.proto.is_empty()
             && self.country.is_empty()
+            && self.iface_in.is_none()
+            && self.iface_out.is_none()
             && self.port.is_none()
             && self.threat_min.is_none()
             && self.from.is_none()
@@ -136,6 +143,12 @@ impl LogFilter {
         if !self.country.is_empty() {
             let codes: Vec<String> = self.country.iter().map(|s| s.to_uppercase()).collect();
             qb.push(" AND l.geo_country = ANY(").push_bind(codes).push(")");
+        }
+        if let Some(name) = self.iface_in.as_deref().filter(|s| !s.is_empty()) {
+            qb.push(" AND lower(ii.name) = ").push_bind(name.to_lowercase());
+        }
+        if let Some(name) = self.iface_out.as_deref().filter(|s| !s.is_empty()) {
+            qb.push(" AND lower(io.name) = ").push_bind(name.to_lowercase());
         }
         if let Some(port) = self.port {
             qb.push(" AND (l.src_port = ").push_bind(port)

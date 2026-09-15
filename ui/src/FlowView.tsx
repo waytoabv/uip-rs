@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, Show, type Component } from 'solid-js';
 import { sankeyLinkHorizontal } from 'd3-sankey';
+import VizHostPanel from './VizHostPanel';
 import VizPairs from './VizPairs';
 import {
   computeLayout,
@@ -91,6 +92,10 @@ const FlowView: Component<Props> = (props) => {
   const [panel, setPanel] = createSignal<PanelKey>('sankey');
   const [activeNode, setActiveNode] = createSignal<{ kind: string; label: string } | null>(null);
   const [activeCell, setActiveCell] = createSignal<{ from: string; to: string } | null>(null);
+  // Welche Adresse gerade aufgeschlüsselt wird. Ein Klick filtert weiterhin;
+  // die Leiste kommt zusätzlich, weil Filtern die Frage "was macht dieser
+  // Host?" nicht beantwortet, sondern nur die Liste kürzt.
+  const [hostIp, setHostIp] = createSignal<string | null>(null);
 
   // Ändert sich der geteilte Filter, laden beide Endpunkte neu — dieselbe
   // Auswahl, zwei Blickwinkel.
@@ -158,13 +163,16 @@ const FlowView: Component<Props> = (props) => {
       if (/^\d+$/.test(port)) props.onFilter({ port });
       return;
     }
+    setHostIp(n.label);
     props.onFilter({ q: n.label });
   };
 
   const handleCellClick = (from: string, to: string, cell: ZoneCell | undefined) => {
     if (!cell) return;
     setActiveCell((prev) => (prev && prev.from === from && prev.to === to ? null : { from, to }));
-    props.onFilter({ iface: from });
+    // Gerichtet, nicht nur die Quelle: eine Zelle ist der Verkehr von X
+    // nach Y, und `iface` allein träfe auch die Gegenrichtung.
+    props.onFilter({ iface_in: from, iface_out: to, iface: '' });
   };
 
   return (
@@ -389,7 +397,16 @@ const FlowView: Component<Props> = (props) => {
         </div>
       </Show>
       <Show when={panel() === 'pairs'}>
-        <VizPairs query={props.query} onFilter={props.onFilter} />
+        <VizPairs query={props.query} onFilter={props.onFilter} onInspect={setHostIp} />
+      </Show>
+
+      <Show when={hostIp()}>
+        <VizHostPanel
+          ip={hostIp()!}
+          query={props.query}
+          onClose={() => setHostIp(null)}
+          onFilter={props.onFilter}
+        />
       </Show>
 
     </div>

@@ -31,6 +31,7 @@ async function fetchPairs(query: string): Promise<Pair[]> {
 export default function VizPairs(props: {
   query: string;
   onFilter: (patch: Record<string, string>) => void;
+  onInspect?: (ip: string) => void;
 }) {
   const [pairs, setPairs] = createSignal<Pair[]>([]);
   const [loading, setLoading] = createSignal(true);
@@ -81,7 +82,7 @@ export default function VizPairs(props: {
                     <button
                       type="button"
                       class="text-gray-800 hover:underline dark:text-gray-200"
-                      onClick={() => p.src_ip && props.onFilter({ q: `src:${p.src_ip}` })}
+                      onClick={() => p.src_ip && (props.onInspect ? props.onInspect(p.src_ip) : props.onFilter({ q: `src:${p.src_ip}` }))}
                     >
                       {p.src_ip ?? '—'}
                     </button>
@@ -90,7 +91,7 @@ export default function VizPairs(props: {
                     <button
                       type="button"
                       class="text-gray-800 hover:underline dark:text-gray-200"
-                      onClick={() => p.dst_ip && props.onFilter({ q: `dst:${p.dst_ip}` })}
+                      onClick={() => p.dst_ip && (props.onInspect ? props.onInspect(p.dst_ip) : props.onFilter({ q: `dst:${p.dst_ip}` }))}
                     >
                       {p.dst_ip ?? '—'}
                     </button>

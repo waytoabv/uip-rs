@@ -3,6 +3,7 @@ pub mod dashboard;
 pub mod error;
 pub mod export;
 pub mod flows;
+pub mod hostdetail;
 pub mod filters;
 pub mod logs;
 pub mod search;
@@ -48,6 +49,7 @@ pub fn router(pool: PgPool, events: broadcast::Sender<Arc<LiveRow>>) -> Router {
         .route("/api/threats/points", get(threats::get_points))
         .route("/api/flows/sankey", get(flows::get_sankey))
         .route("/api/flows/zones", get(flows::get_zones))
+        .route("/api/flows/host-detail", get(hostdetail::get_host_detail))
         .fallback(static_files::serve)
         .with_state(ApiState { pool, events })
 }

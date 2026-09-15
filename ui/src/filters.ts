@@ -20,6 +20,10 @@ export interface FilterState {
   action: string;
   direction: string;
   iface: string;
+  // Gerichtet: eine Zelle der Zonenmatrix ist Verkehr von X nach Y, und
+  // `iface` allein träfe auch die Gegenrichtung.
+  iface_in: string;
+  iface_out: string;
   proto: string;
   country: string;
   port: string;
@@ -40,6 +44,8 @@ export function emptyFilters(): FilterState {
     action: '',
     direction: '',
     iface: '',
+    iface_in: '',
+    iface_out: '',
     proto: '',
     country: '',
     port: '',
@@ -177,6 +183,8 @@ const FIELD_LABELS: Record<keyof FilterState, string> = {
   action: 'Action',
   direction: 'Direction',
   iface: 'Interface',
+  iface_in: 'From',
+  iface_out: 'To',
   proto: 'Protocol',
   country: 'Country',
   port: 'Port',
