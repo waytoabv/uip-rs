@@ -291,3 +291,34 @@ export function rawMessage(raw: string | null | undefined): string | null {
   if (tail[0] === host) tail.shift();
   return tail.join(' ').trim() || null;
 }
+
+/**
+ * Protokollnummer zu Namen.
+ *
+ * Manche Firewall-Zeilen tragen im PROTO-Feld eine Zahl statt eines Namens
+ * (`PROTO=2`). Die Vorlage zeigt sie unverändert an — „2" sagt aber niemandem
+ * etwas, und die Zuordnung ist genormt. Unbekanntes bleibt unverändert
+ * stehen, statt geraten zu werden.
+ */
+const PROTOCOL_NUMBERS: Record<string, string> = {
+  '1': 'ICMP',
+  '2': 'IGMP',
+  '4': 'IPv4',
+  '6': 'TCP',
+  '17': 'UDP',
+  '41': 'IPv6',
+  '47': 'GRE',
+  '50': 'ESP',
+  '51': 'AH',
+  '58': 'ICMPv6',
+  '89': 'OSPF',
+  '112': 'VRRP',
+  '132': 'SCTP',
+};
+
+export function protocolName(proto: string | null | undefined): string | null {
+  if (!proto) return null;
+  const trimmed = proto.trim();
+  if (!trimmed) return null;
+  return PROTOCOL_NUMBERS[trimmed] ?? trimmed.toUpperCase();
+}

@@ -11,19 +11,35 @@ export interface SeriesPoint {
 // Gemeinsame Bühne für beide Flächendiagramme: eine Bibliothek für zwei
 // handgezeichnete Pfade lohnt nicht (siehe Vorgabe), aber Achsen, Skalierung
 // und Hover-Logik teilen sich beide Karten.
-const W = 760;
+// Breite nah an der tatsächlichen Anzeigebreite: sonst skaliert das SVG
+// hoch und zieht Höhe und Schriftgrößen mit.
+const W = 1600;
 const PAD_L = 44;
 const PAD_R = 10;
 const PAD_T = 12;
 const PAD_B = 22;
 
-function formatTick(iso: string, bucket: string): string {
+/**
+ * Achsenbeschriftung.
+ *
+ * Entscheidend ist die **Spanne der Daten**, nicht die Bucht-Breite: bei
+ * 15-Minuten-Buckets über zwei Tage zeigte die Achse nur Uhrzeiten und las
+ * sich dadurch wie eine Zeitreise — 16:15, 21:45, 22:00, 16:45, 17:00.
+ */
+function formatTick(iso: string, bucket: string, spansDays: boolean): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  if (bucket.includes('hour') || bucket.includes('minute')) {
-    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  }
-  return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+  const day = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  if (!bucket.includes('hour') && !bucket.includes('minute')) return day;
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return spansDays ? `${day} ${time}` : time;
+}
+
+/** Ob die Reihe mehr als einen Kalendertag berührt. */
+function spansMultipleDays(points: { t: string }[]): boolean {
+  if (points.length < 2) return false;
+  const first = new Date(points[0].t).toDateString();
+  return points.some((p) => new Date(p.t).toDateString() !== first);
 }
 
 /** x-Position, Hover-Index und die paar Dinge, die beide Diagramme aus der
@@ -101,7 +117,7 @@ const ChartAxes: Component<
             fill="var(--muted)"
             text-anchor={i === 0 ? 'start' : i === props.points.length - 1 ? 'end' : 'middle'}
           >
-            {formatTick(props.points[i].t, props.bucket)}
+            {formatTick(props.points[i].t, props.bucket, spansMultipleDays(props.points))}
           </text>
         )}
       </For>
@@ -157,7 +173,7 @@ export const TrafficOverTimeChart: Component<{ points: SeriesPoint[]; bucket: st
           class="absolute -translate-x-1/2 -translate-y-full pointer-events-none rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-xs whitespace-nowrap"
           style={{ left: `${(hoverX() / W) * 100}%`, top: '0.5rem' }}
         >
-          {formatTick(hovered()!.t, props.bucket)} — {formatNumber(hovered()!.allowed + hovered()!.blocked)}
+          {formatTick(hovered()!.t, props.bucket, spansMultipleDays(props.points))} — {formatNumber(hovered()!.allowed + hovered()!.blocked)}
         </div>
       </Show>
     </div>
@@ -230,7 +246,7 @@ export const TrafficByActionChart: Component<{ points: SeriesPoint[]; bucket: st
           class="absolute -translate-x-1/2 -translate-y-full pointer-events-none rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-xs whitespace-nowrap"
           style={{ left: `${(hoverX() / W) * 100}%`, top: '0.5rem' }}
         >
-          {formatTick(hovered()!.t, props.bucket)} — allowed {formatNumber(hovered()!.allowed)}, blocked{' '}
+          {formatTick(hovered()!.t, props.bucket, spansMultipleDays(props.points))} — allowed {formatNumber(hovered()!.allowed)}, blocked{' '}
           {formatNumber(hovered()!.blocked)}
         </div>
       </Show>

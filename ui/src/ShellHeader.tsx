@@ -46,7 +46,7 @@ async function pingHealth(): Promise<boolean> {
 }
 
 function formatCount(n: number | null): string {
-  return n == null ? '—' : `${n.toLocaleString()} logs`;
+  return n == null ? '—' : `${n.toLocaleString('en-GB')} logs`;
 }
 
 export default function ShellHeader<View extends string>(props: Props<View>): JSX.Element {

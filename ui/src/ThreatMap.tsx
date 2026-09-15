@@ -187,7 +187,7 @@ function LogDetail(props: { log: LogRow; onBack: () => void }) {
       >
         ← Zurück zur Liste
       </button>
-      <div class="px-3 py-2 text-xs text-gray-500">{new Date(log().timestamp).toLocaleString()}</div>
+      <div class="px-3 py-2 text-xs text-gray-500">{new Date(log().timestamp).toLocaleString('en-GB')}</div>
       <div class="px-3 pb-2">
         <Row
           label="Risiko"
@@ -341,7 +341,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
   const tooltip = (p: ThreatPoint) => {
     const land = countryName(p.country) || 'unbekannt';
     const where = p.city ? `${p.city}, ${land}` : land;
-    const lines = [where, `${p.count.toLocaleString()} blockiert`];
+    const lines = [where, `${p.count.toLocaleString('en-GB')} blocked`];
     if (p.max_threat != null) lines.push(`höchster Threat-Score: ${p.max_threat}`);
     if (p.sample_ip) lines.push(`z.B. ${p.sample_ip}`);
     return lines.join('\n');
@@ -374,9 +374,9 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
             <span class="text-blue-600 dark:text-blue-400">Lädt…</span>
           </Show>
           <Show when={loaded()}>
-            <span>{points().length.toLocaleString()} locations</span>
+            <span>{points().length.toLocaleString('en-GB')} locations</span>
             <span class="text-gray-700 dark:text-gray-300 dark:text-gray-700">|</span>
-            <span>{totalEvents().toLocaleString()} Ereignisse</span>
+            <span>{totalEvents().toLocaleString('en-GB')} Ereignisse</span>
           </Show>
         </div>
       </div>
@@ -439,7 +439,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                       class="pointer-events-none fill-white"
                       style={{ 'font-size': '9px', 'font-weight': 600 }}
                     >
-                      {p.count.toLocaleString()}
+                      {p.count.toLocaleString('en-GB')}
                     </text>
                   ) : null
                 }
@@ -455,7 +455,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                 <div class="mt-1 text-xs text-gray-500">
                   {blockedTotal() === 0
                     ? 'No blocked traffic in this window — the map simply has nothing to show.'
-                    : `${blockedTotal().toLocaleString()} blockierte Zeile${blockedTotal() === 1 ? '' : 'n'} in diesem Filter, aber keine ` +
+                    : `${blockedTotal().toLocaleString('en-GB')} blockierte Zeile${blockedTotal() === 1 ? '' : 'n'} in diesem Filter, aber keine ` +
                       'davon ist geografisch angereichert: entweder fehlen die GeoIP-Datenbanken, oder die Anreicherung läuft noch.'}
                 </div>
               </div>
@@ -500,7 +500,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
           </Show>
         </div>
 
-        {/* Seitenleiste — Ereignisse am angeklickten Ort */}
+        {/* Seitenleiste — events am angeklickten Ort */}
         <Show when={selected()}>
           {(loc) => (
             <div class="flex max-h-[34rem] w-72 shrink-0 flex-col border-l border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
@@ -511,7 +511,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                     {[loc().city, countryName(loc().country)].filter(Boolean).join(', ') || 'Unbekannt'}
                   </div>
                   <div class="text-xs text-gray-500">
-                    {loc().count.toLocaleString()} Ereignisse
+                    {loc().count.toLocaleString('en-GB')} events
                     <Show when={loc().maxThreat != null}> · Score {loc().maxThreat}</Show>
                   </div>
                 </div>
@@ -532,7 +532,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
               </Show>
               <Show when={!sidebarLoading() && sidebarLogs().length === 0}>
                 <div class="flex flex-1 items-center justify-center py-6">
-                  <span class="text-xs text-gray-500">Keine Ereignisse gefunden</span>
+                  <span class="text-xs text-gray-500">Keine events gefunden</span>
                 </div>
               </Show>
               <Show when={!sidebarLoading() && sidebarLogs().length > 0}>
@@ -560,7 +560,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                             <span class={`text-xs font-semibold uppercase ${ACTION_TEXT[log.rule_action ?? ''] ?? 'text-gray-500'}`}>
                               {log.rule_action ?? log.log_type ?? '—'}
                             </span>
-                            <span class="text-xs text-gray-500">{new Date(log.timestamp).toLocaleString()}</span>
+                            <span class="text-xs text-gray-500">{new Date(log.timestamp).toLocaleString('en-GB')}</span>
                           </div>
                         </button>
                       )}

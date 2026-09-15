@@ -48,9 +48,9 @@ const KIND_STYLE: Record<NodeDatum['kind'], { node: string; link: string; label:
 };
 const OTHER_STYLE = { node: '#6b7280', link: 'rgba(107,114,128,0.35)' };
 
-// Fünf Stufen von Blau (überwiegend erlaubt) nach Rosa/Rot (überwiegend
-// blockiert) — dieselbe Idee wie ZoneMatrix im Original, nur nach Anteil
-// blockiert statt nach Gesamtvolumen gestuft.
+// Fünf Stufen von Blau (überwiegend allowed) nach Rosa/Rot (überwiegend
+// blocked) — dieselbe Idee wie ZoneMatrix im Original, nur nach Anteil
+// blocked statt nach Gesamtvolumen gestuft.
 const ZONE_TIERS = [
   { bg: '#0ea5e9', fg: '#f0f9ff' },
   { bg: '#6366f1', fg: '#eef2ff' },
@@ -248,7 +248,7 @@ const FlowView: Component<Props> = (props) => {
                           style={{ stroke: `color-mix(in srgb, ${base}, #ef4444 ${pct}%)` }}
                         >
                           <title>
-                            {source.label} → {(l.target as SNode).label}: {l.value.toLocaleString()} ({pct}% blockiert)
+                            {source.label} → {(l.target as SNode).label}: {l.value.toLocaleString('en-GB')} ({pct}% blocked)
                           </title>
                         </path>
                       );
@@ -375,10 +375,10 @@ const FlowView: Component<Props> = (props) => {
                                     style={
                                       !active() && tier() ? { background: tier()!.bg, color: tier()!.fg } : { background: '#1f2937', color: '#e5e7eb' }
                                     }
-                                    title={`${from} → ${to}: ${(cell()!.allowed + cell()!.blocked).toLocaleString()} gesamt, ${cell()!.allowed.toLocaleString()} erlaubt, ${cell()!.blocked.toLocaleString()} blockiert`}
+                                    title={`${from} → ${to}: ${(cell()!.allowed + cell()!.blocked).toLocaleString('en-GB')} total, ${cell()!.allowed.toLocaleString('en-GB')} allowed, ${cell()!.blocked.toLocaleString('en-GB')} blocked`}
                                   >
-                                    {cell()!.allowed.toLocaleString()}
-                                    {cell()!.blocked > 0 ? <span class="text-red-200"> / {cell()!.blocked.toLocaleString()}</span> : null}
+                                    {cell()!.allowed.toLocaleString('en-GB')}
+                                    {cell()!.blocked > 0 ? <span class="text-red-200"> / {cell()!.blocked.toLocaleString('en-GB')}</span> : null}
                                   </button>
                                 ) : (
                                   <div class="px-3 py-2.5 text-center text-gray-700 dark:text-gray-300">–</div>

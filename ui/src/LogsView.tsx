@@ -11,6 +11,7 @@ import {
   logTypePillClass,
   networkPath,
   normalizeRuleDesc,
+  protocolName,
   rawMessage,
   serviceName,
   threatDotClass,
@@ -142,7 +143,17 @@ function addressName(row: LogEntry, side: 'src' | 'dst'): string | null {
 
 function formatClock(ts: string): string {
   const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString('en-GB');
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+/** Tag und Monat, wie die Vorlage sie unter der Uhrzeit zeigt: "8 Feb". */
+function formatDateShort(ts: string): string {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
 function TypePill(props: { type: string | null }) {
@@ -464,35 +475,35 @@ export default function LogsView(props: { query: string }) {
         <table class="w-full text-left border-collapse">
           <thead class="sticky top-0 z-10 bg-gray-100 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
             <tr>
-              <th class="px-3 py-2 w-20 text-[11px] text-gray-400 font-medium uppercase tracking-wider">Time</th>
-              <th class="px-2 py-2 w-20 text-[11px] text-gray-400 font-medium uppercase tracking-wider">Type</th>
-              <th class="px-2 py-2 w-20 text-[11px] text-gray-400 font-medium uppercase tracking-wider">Action</th>
-              <th class="px-2 py-2 w-40 text-[11px] text-gray-400 font-medium uppercase tracking-wider">Source</th>
+              <th class="px-3 py-2 w-20 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Time</th>
+              <th class="px-2 py-2 w-20 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Type</th>
+              <th class="px-2 py-2 w-20 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Action</th>
+              <th class="px-2 py-2 w-40 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Source</th>
               <th class="px-1 py-2 w-6"></th>
-              <th class="px-2 py-2 w-40 text-[11px] text-gray-400 font-medium uppercase tracking-wider">Destination</th>
-              <th class="px-2 py-2 w-16 text-[11px] text-gray-400 font-medium uppercase tracking-wider text-center">
+              <th class="px-2 py-2 w-40 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Destination</th>
+              <th class="px-2 py-2 w-16 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider text-center">
                 Country
               </th>
               <Show when={showCol('asn')}>
-                <th class="px-2 py-2 w-36 text-[11px] text-gray-400 font-medium uppercase tracking-wider">ASN</th>
+                <th class="px-2 py-2 w-36 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">ASN</th>
               </Show>
-              <th class="px-2 py-2 w-28 text-[11px] text-gray-400 font-medium uppercase tracking-wider">Network</th>
+              <th class="px-2 py-2 w-28 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Network</th>
               <Show when={showCol('proto')}>
-                <th class="px-2 py-2 w-12 text-[11px] text-gray-400 font-medium uppercase tracking-wider">Proto</th>
+                <th class="px-2 py-2 w-12 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Proto</th>
               </Show>
-              <th class="px-2 py-2 w-28 text-[11px] text-gray-400 font-medium uppercase tracking-wider">Service</th>
+              <th class="px-2 py-2 w-28 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">Service</th>
               <Show when={showCol('rule')}>
-                <th class="px-2 py-2 w-48 text-[11px] text-gray-400 font-medium uppercase tracking-wider">
+                <th class="px-2 py-2 w-48 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">
                   Rule / Info
                 </th>
               </Show>
               <Show when={showCol('threat')}>
-                <th class="px-2 py-2 w-20 text-[11px] text-gray-400 font-medium uppercase tracking-wider">
+                <th class="px-2 py-2 w-20 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">
                   AbuseIPDB
                 </th>
               </Show>
               <Show when={showCol('categories')}>
-                <th class="px-2 py-2 w-40 text-[11px] text-gray-400 font-medium uppercase tracking-wider">
+                <th class="px-2 py-2 w-40 text-[12px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">
                   Categories
                 </th>
               </Show>
@@ -531,8 +542,13 @@ export default function LogsView(props: { query: string }) {
                             expanded() ? '' : 'border-b border-gray-200/50 dark:border-gray-800/50'
                           } ${tint ? 'bg-red-100/60 dark:bg-red-950/10' : ''}`}
                         >
-                          <td class="px-3 py-1.5 whitespace-nowrap text-[13px] text-gray-400" title={row.timestamp}>
-                            {formatClock(row.timestamp)}
+                          <td class="px-3 py-1.5 whitespace-nowrap" title={row.timestamp}>
+                            <div class="text-[13px] font-light text-gray-500 dark:text-gray-400">
+                              {formatClock(row.timestamp)}
+                            </div>
+                            <div class="text-[11px] font-bold text-gray-900 dark:text-white">
+                              {formatDateShort(row.timestamp)}
+                            </div>
                           </td>
                           <td class="px-2 py-1.5">
                             <TypePill type={row.log_type} />
@@ -564,7 +580,7 @@ export default function LogsView(props: { query: string }) {
                             {networkPath(row.iface_in, row.iface_out)}
                           </td>
                           <Show when={showCol('proto')}>
-                            <td class="px-2 py-1.5 text-[12px] text-gray-400 uppercase">{row.protocol ?? '—'}</td>
+                            <td class="px-2 py-1.5 text-[12px] text-gray-400 uppercase">{protocolName(row.protocol) ?? '—'}</td>
                           </Show>
                           <td class="px-2 py-1.5 text-[12px] text-gray-400">{serviceFor(row)}</td>
                           <Show when={showCol('rule')}>

@@ -5,7 +5,7 @@ import { createEffect, createSignal, For, Show } from 'solid-js';
  *
  * Das Flussdiagramm zeigt, *wohin* Verkehr geht, und fasst dafür auf zwölf
  * Knoten je Spalte zusammen. Diese Liste beantwortet die andere Frage: welche
- * konkrete Verbindung wie oft vorkam, erlaubt und blockiert getrennt. Das ist
+ * konkrete Verbindung wie oft vorkam, erlaubt und abgewiesen getrennt. Das ist
  * die Sicht, die man beim Aufräumen von Firewall-Regeln braucht.
  */
 interface Pair {

@@ -13,7 +13,9 @@
 
 const display = (() => {
   try {
-    return new Intl.DisplayNames(undefined, { type: 'region' });
+    // Bewusst nicht die Browsersprache: die übrige Oberfläche ist
+    // englisch, und gemischte Sprachen sind schlechter als jede einzelne.
+    return new Intl.DisplayNames('en', { type: 'region' });
   } catch {
     return null; // sehr alte Umgebung — dann bleibt es beim Code
   }

@@ -4,7 +4,7 @@
 // Projekts) — die Rechnung dahinter verdient trotzdem eigene Tests statt in
 // der Komponente mitzulaufen.
 
-import { area as d3Area, curveMonotoneX } from 'd3-shape';
+import { area as d3Area, curveMonotoneX, line as d3Line } from 'd3-shape';
 
 /** Lineare Skala von [0, domainMax] auf [rangeMax, rangeMin] — gespiegelt,
  * weil SVG-y nach unten wächst. `domainMax <= 0` (keine Daten oder alles
@@ -26,12 +26,33 @@ export function xScale(n: number, left: number, right: number): (i: number) => n
  * über die Oberkante, zurück über die Unterkante, geschlossen. Leere Eingabe
  * ergibt einen leeren Pfad statt zu werfen — wichtig, wenn ein Endpunkt (noch)
  * nichts liefert. */
+/**
+ * Fläche zwischen zwei Kurven.
+ *
+ * Weich geschwungen wie in der Vorlage, nicht als Streckenzug: `monotoneX`
+ * schwingt zwischen den Punkten nicht über sie hinaus — bei einem
+ * Verkehrsdiagramm hieße das sonst Ausschläge, die es nie gab, und unter
+ * Umständen Werte unter null.
+ */
 export function areaPath(xs: number[], tops: number[], bottoms: number[]): string {
   const n = xs.length;
   if (n === 0) return '';
-  const forward = xs.map((x, i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${tops[i].toFixed(1)}`);
-  const backward = [...xs.keys()].reverse().map((i) => `L ${xs[i].toFixed(1)} ${bottoms[i].toFixed(1)}`);
-  return [...forward, ...backward, 'Z'].join(' ');
+  const gen = d3Area<number>()
+    .x((_, i) => xs[i])
+    .y1((_, i) => tops[i])
+    .y0((_, i) => bottoms[i])
+    .curve(curveMonotoneX);
+  return gen(xs) ?? '';
+}
+
+/** Nur die obere Kante derselben Fläche — für die Linie darüber. */
+export function linePath(xs: number[], ys: number[]): string {
+  if (xs.length === 0) return '';
+  const gen = d3Line<number>()
+    .x((_, i) => xs[i])
+    .y((_, i) => ys[i])
+    .curve(curveMonotoneX);
+  return gen(xs) ?? '';
 }
 
 /** Dieselbe gefüllte Fläche wie `areaPath`, nur mit weich geschwungener

@@ -7,7 +7,7 @@ import { countryName } from './country';
  *
  * Das Flussdiagramm zeigt Ströme, die Paarliste Verbindungen — hier steht,
  * mit wem dieser eine Host spricht, auf welchen Diensten, seit wann und wie
- * viel davon blockiert wurde. Das ist der Schritt von „da stimmt etwas nicht"
+ * viel davon abgewiesen wurde. Das ist der Schritt von „da stimmt etwas nicht"
  * zu „das ist es".
  *
  * Der geteilte Filter gilt mit: sonst zeigte die Leiste andere Zahlen als die

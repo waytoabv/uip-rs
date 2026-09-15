@@ -14,6 +14,7 @@ import {
   serviceName,
   threatDotClass,
   rawMessage,
+  protocolName,
 } from './LogHelpers';
 
 describe('directionGlyph', () => {
@@ -209,5 +210,25 @@ describe('rawMessage', () => {
     expect(rawMessage(null)).toBeNull();
     expect(rawMessage('')).toBeNull();
     expect(rawMessage('   ')).toBeNull();
+  });
+});
+
+describe('protocolName', () => {
+  it('übersetzt die genormten Nummern', () => {
+    expect(protocolName('2')).toBe('IGMP');
+    expect(protocolName('6')).toBe('TCP');
+    expect(protocolName('17')).toBe('UDP');
+  });
+
+  it('lässt Namen in Ruhe und schreibt sie groß', () => {
+    expect(protocolName('tcp')).toBe('TCP');
+    expect(protocolName('UDP')).toBe('UDP');
+  });
+
+  it('rät bei Unbekanntem nicht', () => {
+    expect(protocolName('254')).toBe('254');
+    expect(protocolName(null)).toBeNull();
+    expect(protocolName('')).toBeNull();
+    expect(protocolName('   ')).toBeNull();
   });
 });

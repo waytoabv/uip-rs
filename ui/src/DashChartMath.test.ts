@@ -46,13 +46,28 @@ describe('areaPath', () => {
     expect(areaPath([], [], [])).toBe('');
   });
 
-  it('baut einen geschlossenen Pfad vorwärts über die Ober- und zurück über die Unterkante', () => {
+  it('schließt die Fläche zwischen Ober- und Unterkante', () => {
     const d = areaPath([0, 10], [5, 5], [20, 20]);
-    expect(d.startsWith('M 0.0 5.0')).toBe(true);
+    expect(d.startsWith('M0,5')).toBe(true);
     expect(d.endsWith('Z')).toBe(true);
-    expect(d).toContain('L 10.0 5.0');
-    expect(d).toContain('L 10.0 20.0');
-    expect(d).toContain('L 0.0 20.0');
+    // Die Unterkante muss vorkommen, sonst ist es eine Linie, keine Fläche.
+    expect(d).toContain('20');
+  });
+
+  /// Der Grund für die monotone Kurve: eine gewöhnliche Spline schwingt
+  /// zwischen den Punkten über sie hinaus. Bei einem Verkehrsdiagramm wären
+  /// das Ausschläge, die es nie gab — und unter null sogar unmögliche.
+  it('schwingt nicht über die Datenpunkte hinaus', () => {
+    const xs = [0, 10, 20, 30];
+    const tops = [100, 20, 100, 20];
+    const d = areaPath(xs, tops, [100, 100, 100, 100]);
+    // Die Koordinaten stehen paarweise (x,y) — nur jede zweite ist ein y.
+    const nums = (d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+    const ys = nums.filter((_, i) => i % 2 === 1);
+    // Kein Punkt der Kurve liegt oberhalb des höchsten oder unterhalb des
+    // niedrigsten Datenwerts (y ist in SVG nach unten gerichtet).
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(20 - 0.01);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(100 + 0.01);
   });
 });
 
