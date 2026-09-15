@@ -1,8 +1,10 @@
 // Reine Geometrie fürs handgezeichnete Flächendiagramm — kein Solid-Import,
 // damit Skalierung und Pfadaufbau ohne DOM testbar sind (DashChartMath.test.ts).
-// Eine Bibliothek für zwei Flächenpfade lohnt nicht (siehe Vorgabe); die
-// Rechnung dahinter verdient trotzdem eigene Tests statt in der Komponente
-// mitzulaufen.
+// Für die eigentliche Kurve genügt `d3-shape` (schon eine Abhängigkeit des
+// Projekts) — die Rechnung dahinter verdient trotzdem eigene Tests statt in
+// der Komponente mitzulaufen.
+
+import { area as d3Area, curveMonotoneX } from 'd3-shape';
 
 /** Lineare Skala von [0, domainMax] auf [rangeMax, rangeMin] — gespiegelt,
  * weil SVG-y nach unten wächst. `domainMax <= 0` (keine Daten oder alles
@@ -30,6 +32,23 @@ export function areaPath(xs: number[], tops: number[], bottoms: number[]): strin
   const forward = xs.map((x, i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${tops[i].toFixed(1)}`);
   const backward = [...xs.keys()].reverse().map((i) => `L ${xs[i].toFixed(1)} ${bottoms[i].toFixed(1)}`);
   return [...forward, ...backward, 'Z'].join(' ');
+}
+
+/** Dieselbe gefüllte Fläche wie `areaPath`, nur mit weich geschwungener
+ * Ober- und Unterkante statt gerader Linien zwischen den Punkten — wie im
+ * Original. `curveMonotoneX` statt z. B. `curveNatural`, weil es zwischen
+ * zwei Punkten nie über deren Werte hinausschießt: eine Kurve, die von 0 auf
+ * einen hohen Wert steigt, taucht unterwegs nie unter 0. Weniger als zwei
+ * Punkte ergeben keine sinnvolle Kurve — dann zurück auf die gerade Fläche. */
+export function curvedAreaPath(xs: number[], tops: number[], bottoms: number[]): string {
+  const n = xs.length;
+  if (n < 2) return areaPath(xs, tops, bottoms);
+  const gen = d3Area<number>()
+    .x((_, i) => xs[i])
+    .y1((_, i) => tops[i])
+    .y0((_, i) => bottoms[i])
+    .curve(curveMonotoneX);
+  return gen(xs) ?? '';
 }
 
 /** Bis zu `count` gleichmäßig verteilte, deduplizierte Indizes von `0` bis
