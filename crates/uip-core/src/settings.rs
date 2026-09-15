@@ -16,6 +16,10 @@ pub struct Settings {
     pub pihole_enabled: bool,
     pub pihole_url: Option<String>,
     pub pihole_password: Option<String>,
+    pub unifi_enabled: bool,
+    pub unifi_url: Option<String>,
+    pub unifi_api_key: Option<String>,
+    pub unifi_site: Option<String>,
 }
 
 async fn get(pool: &PgPool, key: &str) -> Option<Value> {
@@ -94,6 +98,11 @@ impl Settings {
         let pihole_url = get(pool, "pihole_url").await.and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty());
         let pihole_password = get(pool, "pihole_password").await.and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty());
 
+        let unifi_enabled = get(pool, "unifi_enabled").await.and_then(|v| v.as_bool()).unwrap_or(false);
+        let unifi_url = get(pool, "unifi_url").await.and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty());
+        let unifi_api_key = get(pool, "unifi_api_key").await.and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty());
+        let unifi_site = get(pool, "unifi_site").await.and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty());
+
         Ok(Self {
             wan_ips,
             gateway_ips,
@@ -103,6 +112,10 @@ impl Settings {
             pihole_enabled,
             pihole_url,
             pihole_password,
+            unifi_enabled,
+            unifi_url,
+            unifi_api_key,
+            unifi_site,
         })
     }
 

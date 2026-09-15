@@ -98,7 +98,11 @@ impl LogFilter {
               LEFT JOIN interfaces ii ON ii.id = l.iface_in_id \
               LEFT JOIN interfaces io ON io.id = l.iface_out_id \
               LEFT JOIN protocols pr ON pr.id = l.protocol_id \
-              LEFT JOIN device_names dn ON dn.id = l.hostname_id ",
+              LEFT JOIN device_names dn ON dn.id = l.hostname_id \
+              LEFT JOIN unifi_clients ucs ON ucs.ip = l.src_ip \
+              LEFT JOIN unifi_clients ucd ON ucd.ip = l.dst_ip \
+              LEFT JOIN unifi_devices uds ON uds.ip = l.src_ip \
+              LEFT JOIN unifi_devices udd ON udd.ip = l.dst_ip ",
         );
     }
 

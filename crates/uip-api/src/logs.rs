@@ -38,6 +38,8 @@ pub async fn get_logs(
                 l.geo_country, l.geo_city, l.geo_lat::float8 AS geo_lat,
                 l.geo_lon::float8 AS geo_lon, l.asn_number, l.asn_name,
                 l.rdns, l.threat_score, l.threat_categories, l.abuse_is_tor,
+                COALESCE(ucs.name, ucs.hostname, uds.name) AS src_device,
+                COALESCE(ucd.name, ucd.hostname, udd.name) AS dst_device,
                 r.name AS rule_name, r.descr AS rule_desc,
                 ii.name AS iface_in, io.name AS iface_out,
                 pr.name AS protocol, dn.name AS hostname, sv.name AS service_name
@@ -73,6 +75,8 @@ pub async fn get_logs(
             "log_type": name(&LOG_TYPES, r.get("log_type_id")),
             "direction": name(&DIRECTIONS, r.get("direction_id")),
             "rule_action": name(&ACTIONS, r.get("rule_action_id")),
+            "src_device": r.get::<Option<String>, _>("src_device"),
+            "dst_device": r.get::<Option<String>, _>("dst_device"),
             "rule_name": r.get::<Option<String>, _>("rule_name"),
             "rule_desc": r.get::<Option<String>, _>("rule_desc"),
             "iface_in": r.get::<Option<String>, _>("iface_in"),
@@ -125,6 +129,44 @@ mod tests {
                  VALUES (NOW() - make_interval(secs => $1::int), 1, '1.2.3.4', 443)",
             ).bind(i).execute(pool).await.unwrap();
         }
+    }
+
+
+    /// Der entscheidende Punkt der Auflösung beim Lesen: Der Name wirkt auch
+    /// für Zeilen, die längst geschrieben waren, als der Controller noch
+    /// unbekannt war. Würde beim Schreiben aufgelöst, bliebe alles Alte für
+    /// immer namenlos.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn unifi_names_apply_to_rows_written_before_the_sync(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, src_ip, dst_ip, dst_port)
+             VALUES (NOW(), 1, '10.0.20.196', '1.1.1.1', 443)",
+        ).execute(&pool).await.unwrap();
+
+        // Erst danach lernt der Controller das Gerät kennen.
+        sqlx::query(
+            "INSERT INTO unifi_clients (mac, ip, name) VALUES ('aa:bb:cc:dd:ee:ff', '10.0.20.196', 'Wohnzimmer-TV')",
+        ).execute(&pool).await.unwrap();
+
+        let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
+        let body = get_json(&app, "/api/logs?limit=1").await;
+        assert_eq!(body["rows"][0]["src_device"].as_str(), Some("Wohnzimmer-TV"));
+        assert!(body["rows"][0]["dst_device"].is_null(), "die Gegenstelle kennt der Controller nicht");
+    }
+
+    /// Ein selbst vergebener Name schlägt den gemeldeten Hostnamen — sonst
+    /// überschreibt das Gerät die Entscheidung des Menschen.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_chosen_name_beats_the_reported_hostname(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO logs (timestamp, log_type_id, src_ip) VALUES (NOW(), 1, '10.0.0.7')")
+            .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO unifi_clients (mac, ip, name, hostname) VALUES ('11:22:33:44:55:66', '10.0.0.7', 'Drucker', 'HP1234')",
+        ).execute(&pool).await.unwrap();
+
+        let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
+        let body = get_json(&app, "/api/logs?limit=1").await;
+        assert_eq!(body["rows"][0]["src_device"].as_str(), Some("Drucker"));
     }
 
     #[sqlx::test(migrations = "../../migrations")]

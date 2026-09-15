@@ -38,6 +38,7 @@ pub fn router(pool: PgPool, events: broadcast::Sender<Arc<LiveRow>>) -> Router {
         .route("/api/health", get(|| async { "ok" }))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
         .route("/api/settings/pihole/test", get(settings::test_pihole))
+        .route("/api/settings/unifi/test", get(settings::test_unifi))
         .route("/api/logs", get(logs::get_logs))
         .route("/api/logs/count", get(count::get_count))
         .route("/api/stream", get(stream::sse_stream))

@@ -87,6 +87,23 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Gerätenamen aus dem Controller. Aufgelöst wird beim Lesen, hier wird
+    // nur der Bestand aktuell gehalten.
+    if settings.unifi_enabled {
+        match &settings.unifi_url {
+            Some(url) if !url.is_empty() => {
+                let client = uip_enrich::unifi::Unifi::new(
+                    url.clone(),
+                    settings.unifi_api_key.clone().unwrap_or_default(),
+                    settings.unifi_site.clone().unwrap_or_default(),
+                );
+                tracing::info!(url = %url, "unifi inventory sync enabled");
+                tokio::spawn(uip_enrich::unifi::run_unifi(client, pool.clone()));
+            }
+            _ => tracing::warn!("unifi enabled but no url configured"),
+        }
+    }
+
     let app = uip_api::router(pool, event_tx);
     let listener = tokio::net::TcpListener::bind(&cfg.http_addr).await?;
     tracing::info!(addr = %cfg.http_addr, "http listener up");

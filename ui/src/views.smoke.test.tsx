@@ -82,6 +82,8 @@ const SAMPLE_LOG: LogEntry = {
   iface_out: 'eth1',
   protocol: 'tcp',
   hostname: null,
+      src_device: null,
+      dst_device: null,
   src_ip: '203.0.113.5',
   dst_ip: '10.0.0.5',
   src_port: 51000,

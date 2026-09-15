@@ -46,6 +46,16 @@ const SECTIONS: { title: string; note?: string; fields: Field[] }[] = [
     ],
   },
   {
+    title: 'UniFi',
+    note: 'Device names from your controller, resolved when reading — so they apply to logs already stored.',
+    fields: [
+      { key: 'unifi_enabled', label: 'Enabled', kind: 'bool' },
+      { key: 'unifi_url', label: 'Controller', kind: 'text', hint: 'https://192.168.1.1' },
+      { key: 'unifi_api_key', label: 'API key', kind: 'secret' },
+      { key: 'unifi_site', label: 'Site', kind: 'text', hint: 'default' },
+    ],
+  },
+  {
     title: 'Retention',
     note: 'Handled by TimescaleDB policies; a change takes effect on the next restart.',
     fields: [
@@ -60,6 +70,7 @@ export default function ShellSettings(props: { onClose: () => void }) {
   const [draft, setDraft] = createSignal<Record<string, string | boolean | number>>({});
   const [status, setStatus] = createSignal<string | null>(null);
   const [piholeTest, setPiholeTest] = createSignal<string | null>(null);
+  const [unifiTest, setUnifiTest] = createSignal<string | null>(null);
 
   onMount(async () => {
     const res = await fetch('/api/settings');
@@ -124,6 +135,21 @@ export default function ShellSettings(props: { onClose: () => void }) {
           ? 'Wrong password'
           : b.reason === 'no_url'
             ? 'No address configured'
+            : 'Not reachable',
+    );
+  };
+
+  const testUnifi = async () => {
+    setUnifiTest('Testing…');
+    const res = await fetch('/api/settings/unifi/test');
+    const b = (await res.json()) as { ok: boolean; reason?: string; clients?: number; devices?: number };
+    setUnifiTest(
+      b.ok
+        ? `Connected — ${b.clients ?? 0} clients, ${b.devices ?? 0} devices`
+        : b.reason === 'bad_credentials'
+          ? 'Key refused'
+          : b.reason === 'no_url'
+            ? 'No controller configured'
             : 'Not reachable',
     );
   };
@@ -203,6 +229,20 @@ export default function ShellSettings(props: { onClose: () => void }) {
                       </label>
                     )}
                   </For>
+                  <Show when={section.title === 'UniFi'}>
+                    <div class="flex items-center gap-3 pl-[10.75rem]">
+                      <button
+                        type="button"
+                        onClick={testUnifi}
+                        class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-700 hover:text-gray-900 dark:border-gray-700 dark:text-gray-300 dark:hover:text-gray-100"
+                      >
+                        Test connection
+                      </button>
+                      <Show when={unifiTest()}>
+                        <span class="text-[11px] text-gray-600 dark:text-gray-400">{unifiTest()}</span>
+                      </Show>
+                    </div>
+                  </Show>
                   <Show when={section.title === 'Pi-hole'}>
                     <div class="flex items-center gap-3 pl-[10.75rem]">
                       <button

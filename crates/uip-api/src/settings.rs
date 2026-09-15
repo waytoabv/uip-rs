@@ -25,6 +25,10 @@ const ALLOWED: &[(&str, Kind)] = &[
     ("pihole_url", Kind::Text),
     ("pihole_password", Kind::Secret),
     ("pihole_enabled", Kind::Bool),
+    ("unifi_url", Kind::Text),
+    ("unifi_api_key", Kind::Secret),
+    ("unifi_site", Kind::Text),
+    ("unifi_enabled", Kind::Bool),
     ("retention_days", Kind::Number),
     ("retention_days_dns", Kind::Number),
 ];
@@ -213,5 +217,34 @@ pub async fn test_pihole(State(pool): State<PgPool>) -> Result<Json<Value>, ApiE
         uip_enrich::pihole::TestOutcome::Ok { version } => json!({ "ok": true, "version": version }),
         uip_enrich::pihole::TestOutcome::BadCredentials => json!({ "ok": false, "reason": "bad_credentials" }),
         uip_enrich::pihole::TestOutcome::Unreachable(e) => json!({ "ok": false, "reason": "unreachable", "detail": e }),
+    }))
+}
+
+/// Prüft die UniFi-Verbindung und meldet, wie viel der Controller kennt.
+pub async fn test_unifi(State(pool): State<PgPool>) -> Result<Json<Value>, ApiError> {
+    let read = |key: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Value>("SELECT value FROM system_config WHERE key = $1")
+                .bind(key)
+                .fetch_optional(&pool)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_default()
+        }
+    };
+    let url = read("unifi_url").await;
+    if url.is_empty() {
+        return Ok(Json(json!({ "ok": false, "reason": "no_url" })));
+    }
+    let client = uip_enrich::unifi::Unifi::new(url, read("unifi_api_key").await, read("unifi_site").await);
+    Ok(Json(match client.test().await {
+        uip_enrich::unifi::TestOutcome::Ok { clients, devices } => {
+            json!({ "ok": true, "clients": clients, "devices": devices })
+        }
+        uip_enrich::unifi::TestOutcome::BadCredentials => json!({ "ok": false, "reason": "bad_credentials" }),
+        uip_enrich::unifi::TestOutcome::Unreachable(e) => json!({ "ok": false, "reason": "unreachable", "detail": e }),
     }))
 }

@@ -63,6 +63,9 @@ export interface LogEntry {
   iface_out: string | null;
   protocol: string | null;
   hostname: string | null;
+  /// Name aus dem UniFi-Controller, je Seite aufgelöst.
+  src_device: string | null;
+  dst_device: string | null;
   src_ip: string | null;
   dst_ip: string | null;
   src_port: number | null;
@@ -128,6 +131,11 @@ function serviceFor(row: LogEntry): string {
 
 /** Gerätename (eigene Seite) bzw. rDNS (Gegenseite) — siehe `localSide` in LogHelpers. */
 function addressName(row: LogEntry, side: 'src' | 'dst'): string | null {
+  // Der Name aus dem Controller zuerst: ihn hat ein Mensch vergeben, und er
+  // gilt für beide Seiten. Erst danach die Notlösungen — der DHCP-Hostname
+  // für die eigene Seite, rDNS für die Gegenstelle.
+  const fromController = side === 'src' ? row.src_device : row.dst_device;
+  if (fromController) return fromController;
   const local = localSide(row.direction, row.src_ip, row.dst_ip);
   return side === local ? row.hostname : row.rdns;
 }

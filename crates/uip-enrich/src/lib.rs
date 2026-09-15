@@ -4,6 +4,7 @@ pub mod pihole;
 pub mod rdns;
 pub mod target;
 pub mod types;
+pub mod unifi;
 pub mod worker;
 pub use target::{is_enrichable, remote_ip};
 pub use types::{GeoSource, IpFacts, RdnsSource, ThreatOutcome, ThreatSource};
