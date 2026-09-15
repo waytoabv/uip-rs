@@ -346,21 +346,27 @@ async fn write_back(
 /// teilen; ein eigener Zustand im Router hieße, ihn durch jeden Konstruktor zu
 /// fädeln.
 async fn persist_quota(pool: &PgPool, q: Quota) {
-    let value = serde_json::json!({
-        "remaining": q.remaining,
-        "paused_until": q.paused_until,
-        "checked_at": Utc::now().to_rfc3339(),
-    });
-    let res = sqlx::query(
-        "INSERT INTO system_config (key, value, updated_at) VALUES ('abuseipdb_quota', $1, NOW())
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+    // -1 und 0 heißen „nicht bekannt" und dürfen nicht als Zahl durchgereicht
+    // werden: die Leiste soll „987" zeigen können, ohne „von -1" daneben.
+    let opt = |n: i64, unknown: i64| (n != unknown).then_some(n);
+    uip_core::settings::put_config(
+        pool,
+        "abuseipdb_quota",
+        serde_json::json!({
+            "remaining": q.remaining,
+            "limit": opt(q.limit, -1),
+            "reset_at": opt(q.reset_at, 0).map(unix_to_rfc3339),
+            "paused_until": opt(q.paused_until, 0).map(unix_to_rfc3339),
+            "checked_at": Utc::now().to_rfc3339(),
+        }),
     )
-    .bind(value)
-    .execute(pool)
     .await;
-    if let Err(e) = res {
-        tracing::warn!(error = %e, "could not persist the abuseipdb quota");
-    }
+}
+
+/// Unix-Sekunden als RFC-3339 — die API reicht Zeitpunkte nirgends als Zahl
+/// heraus, und die Oberfläche soll sie nicht selbst umrechnen müssen.
+fn unix_to_rfc3339(secs: i64) -> String {
+    DateTime::from_timestamp(secs, 0).unwrap_or_else(Utc::now).to_rfc3339()
 }
 
 pub async fn run_worker(

@@ -31,6 +31,15 @@ async fn get(pool: &PgPool, key: &str) -> Option<Value> {
         .flatten()
 }
 
+/// Schreibt einen Wert nach `system_config`.
+///
+/// Öffentlich, weil nicht nur die Einstellungen diesen Weg nehmen: Anreicherung
+/// und Pi-hole-Abruf legen dort ihren Zustand ab, damit die API ihn ausliefern
+/// kann, ohne dass ein Handle durch jeden Konstruktor gefädelt werden muss.
+pub async fn put_config(pool: &PgPool, key: &str, value: Value) {
+    put(pool, key, value).await
+}
+
 async fn put(pool: &PgPool, key: &str, value: Value) {
     let res = sqlx::query(
         "INSERT INTO system_config (key, value, updated_at) VALUES ($1, $2, NOW())

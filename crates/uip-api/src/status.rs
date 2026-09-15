@@ -78,10 +78,19 @@ pub async fn get_status(State(pool): State<PgPool>) -> Result<Json<Value>, ApiEr
 
     let (next_from, next_until) = next_geoip_run(Local::now());
 
+    // Der Punkt in der Kopfzeile soll drei Fälle unterscheiden: abgeschaltet,
+    // verbunden, gestört. Ohne `enabled` wäre „nie gemeldet" nicht von „gerade
+    // abgestürzt" zu trennen.
+    let pihole = json!({
+        "enabled": config(&pool, "pihole_enabled").await.and_then(|v| v.as_bool()).unwrap_or(false),
+        "last": config(&pool, "pihole_status").await,
+    });
+
     Ok(Json(json!({
         // Vom Anreicherungs-Worker geschrieben; `null`, solange es keine
         // Antwort von AbuseIPDB gab, aus der ein Kontingent hervorginge.
         "abuseipdb": config(&pool, "abuseipdb_quota").await,
+        "pihole": pihole,
         "maxmind": {
             "last_update": city.max(asn).map(|t| t.to_rfc3339()),
             "city": city.map(|t| t.to_rfc3339()),
@@ -153,12 +162,50 @@ mod tests {
         assert!(body["maxmind_next_update"]["from"].is_string());
     }
 
+    /// Der Punkt muss „aus", „läuft" und „gestört" auseinanderhalten können.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn pihole_reports_off_running_and_broken(pool: sqlx::PgPool) {
+        let app = crate::router(pool.clone(), tokio::sync::broadcast::channel(8).0);
+        let get = |app: axum::Router| async move {
+            let res = app
+                .oneshot(Request::get("/api/status").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            serde_json::from_slice::<Value>(
+                &axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap(),
+            )
+            .unwrap()
+        };
+
+        // Aus: nichts eingerichtet.
+        let body = get(app.clone()).await;
+        assert_eq!(body["pihole"]["enabled"], false);
+        assert!(body["pihole"]["last"].is_null());
+
+        // An, aber noch kein Durchlauf — „enabled" allein macht keinen Punkt grün.
+        sqlx::query("INSERT INTO system_config (key, value) VALUES ('pihole_enabled', 'true'::jsonb)")
+            .execute(&pool).await.unwrap();
+        let body = get(app.clone()).await;
+        assert_eq!(body["pihole"]["enabled"], true);
+        assert!(body["pihole"]["last"].is_null());
+
+        // Gestört: der Abruf hinterlässt seinen Fehler.
+        sqlx::query(
+            r#"INSERT INTO system_config (key, value) VALUES ('pihole_status',
+             '{"ok": false, "at": "2026-09-15T20:00:00Z", "error": "connection refused"}'::jsonb)"#,
+        ).execute(&pool).await.unwrap();
+        let body = get(app).await;
+        assert_eq!(body["pihole"]["last"]["ok"], false);
+        assert_eq!(body["pihole"]["last"]["error"], "connection refused");
+    }
+
     /// Was der Worker hinterlegt, muss unverändert wieder herauskommen.
     #[sqlx::test(migrations = "../../migrations")]
     async fn the_quota_written_by_the_worker_is_served(pool: sqlx::PgPool) {
         sqlx::query(
-            "INSERT INTO system_config (key, value) VALUES ('abuseipdb_quota',
-             '{\"remaining\": 987, \"paused_until\": 0}'::jsonb)",
+            r#"INSERT INTO system_config (key, value) VALUES ('abuseipdb_quota',
+             '{"remaining": 987, "limit": 1000,
+               "reset_at": "2026-09-16T02:00:00+00:00", "paused_until": null}'::jsonb)"#,
         )
         .execute(&pool)
         .await
@@ -174,6 +221,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(body["abuseipdb"]["remaining"].as_i64(), Some(987));
+        assert_eq!(body["abuseipdb"]["limit"].as_i64(), Some(1000));
+        assert_eq!(body["abuseipdb"]["reset_at"].as_str(), Some("2026-09-16T02:00:00+00:00"));
     }
 
     /// Der Stand kommt aus dem eingestellten Verzeichnis, nicht aus dem

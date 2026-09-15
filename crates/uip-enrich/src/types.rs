@@ -65,6 +65,10 @@ pub trait RdnsSource: Send + Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Quota {
     pub remaining: i64,
+    /// Das Kontingent, aus dem `remaining` übrig ist. -1 = unbekannt.
+    pub limit: i64,
+    /// Unix-Sekunden, zu denen das Kontingent wieder voll ist. 0 = unbekannt.
+    pub reset_at: i64,
     /// Unix-Sekunden, bis zu denen nach einem 429 pausiert wird. 0 = keine Pause.
     pub paused_until: i64,
 }

@@ -1,4 +1,4 @@
-import { createSignal, For, onMount, type JSX } from 'solid-js';
+import { createSignal, For, onMount, Show, type JSX } from 'solid-js';
 
 /**
  * Kopfzeile: Zeichen + Name, Reiter, Statusleiste.
@@ -35,7 +35,13 @@ async function fetchTotalLogs(): Promise<number | null> {
 }
 
 interface Status {
-  abuseipdb: { remaining: number; paused_until: number } | null;
+  abuseipdb: {
+    remaining: number;
+    limit: number | null;
+    reset_at: string | null;
+    paused_until: string | null;
+  } | null;
+  pihole: { enabled: boolean; last: { ok: boolean; at: string; error: string | null } | null };
   maxmind: { last_update: string | null; city: string | null; asn: string | null };
   maxmind_next_update: { from: string; until: string };
 }
@@ -50,13 +56,14 @@ async function fetchStatus(): Promise<Status | null> {
   }
 }
 
-/** Tagesdatum ohne Jahr — die Leiste hat keinen Platz, und das Jahr sagt hier nichts. */
-function shortDate(iso: string | null | undefined): string {
+/** Datum samt Uhrzeit, wie in der Vorlage: „12 Sep 2026 14:23". */
+function stamp(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? '—'
-    : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  if (Number.isNaN(d.getTime())) return '—';
+  const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return `${date} ${time}`;
 }
 
 /** Ganze Tage seit `iso`, für die Alterswarnung. */
@@ -68,19 +75,13 @@ function daysSince(iso: string | null | undefined): number | null {
 }
 
 /**
- * Das Zeitfenster des nächsten Laufs, etwa „Mon 00–06".
- *
- * Ein Fenster, kein Zeitpunkt: der Timer streut den Start über sechs Stunden
- * (siehe `crates/uip-api/src/status.rs`).
+ * Das Kontingent als „987/1000", oder nur „987", solange das Limit unbekannt
+ * ist. AbuseIPDB nennt es erst in der ersten Antwort.
  */
-function nextRun(window: Status['maxmind_next_update'] | undefined): string {
-  if (!window) return '—';
-  const from = new Date(window.from);
-  const until = new Date(window.until);
-  if (Number.isNaN(from.getTime()) || Number.isNaN(until.getTime())) return '—';
-  const day = from.toLocaleDateString('en-GB', { weekday: 'short' });
-  const hh = (d: Date) => String(d.getHours()).padStart(2, '0');
-  return `${day} ${hh(from)}–${hh(until)}`;
+function quotaText(q: Status['abuseipdb']): string {
+  if (!q) return '—';
+  const left = q.remaining.toLocaleString('en-GB');
+  return q.limit == null ? left : `${left}/${q.limit.toLocaleString('en-GB')}`;
 }
 
 async function pingHealth(): Promise<boolean> {
@@ -105,7 +106,49 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
   // das darf nicht dieselbe Farbe haben wie ein gesunder Stand.
   const quotaSpent = () => {
     const q = status()?.abuseipdb;
-    return q != null && (q.remaining === 0 || q.paused_until * 1000 > Date.now());
+    if (q == null) return false;
+    const paused = q.paused_until ? new Date(q.paused_until).getTime() > Date.now() : false;
+    return q.remaining === 0 || paused;
+  };
+
+  /**
+   * Der Zustand des Pi-hole-Abrufs, für den zweiten Punkt.
+   *
+   * `stale` ist der Fall, den ein bloßes ok/Fehler nicht abdeckt: die Schleife
+   * meldet sich bei jedem Durchlauf, auch wenn nichts zu holen war. Bleibt die
+   * Meldung aus, läuft sie nicht mehr — und das sieht von außen sonst genauso
+   * aus wie „läuft".
+   */
+  const piholeState = (): 'off' | 'ok' | 'error' | 'stale' | 'waiting' => {
+    const p = status()?.pihole;
+    if (!p?.enabled) return 'off';
+    if (!p.last) return 'waiting';
+    if (!p.last.ok) return 'error';
+    // Abgerufen wird alle 30 s; nach zwei Minuten Stille stimmt etwas nicht.
+    const age = Date.now() - new Date(p.last.at).getTime();
+    return age > 120_000 ? 'stale' : 'ok';
+  };
+
+  const PIHOLE_DOT: Record<string, string> = {
+    ok: 'bg-emerald-400',
+    error: 'bg-red-400',
+    stale: 'bg-amber-400',
+    waiting: 'bg-gray-400',
+    off: '',
+  };
+
+  const piholeTitle = () => {
+    const p = status()?.pihole;
+    switch (piholeState()) {
+      case 'ok':
+        return `Pi-hole: last poll ${stamp(p?.last?.at)}`;
+      case 'error':
+        return `Pi-hole: ${p?.last?.error ?? 'last poll failed'}`;
+      case 'stale':
+        return `Pi-hole: nothing since ${stamp(p?.last?.at)} — the poll loop looks stuck`;
+      default:
+        return 'Pi-hole: enabled, waiting for the first poll';
+    }
   };
   // GeoLite2 erscheint wöchentlich; einen Monat ohne Aktualisierung hat
   // niemand absichtlich.
@@ -169,7 +212,10 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
                   : 'Checks left in the current AbuseIPDB quota'
             }
           >
-            AbuseIPDB: {status()?.abuseipdb ? status()!.abuseipdb!.remaining.toLocaleString('en-GB') : '—'}
+            AbuseIPDB: {quotaText(status()?.abuseipdb ?? null)}
+            <Show when={status()?.abuseipdb?.reset_at}>
+              {' · '}Reset {stamp(status()!.abuseipdb!.reset_at)}
+            </Show>
           </span>
           <span class="text-xs text-gray-400 dark:text-gray-600">|</span>
           <span
@@ -177,21 +223,29 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
             title={
               status()?.maxmind.last_update == null
                 ? 'No GeoLite2 database found in the configured directory'
-                : `City: ${shortDate(status()?.maxmind.city)} · ASN: ${shortDate(status()?.maxmind.asn)}`
+                : `City: ${stamp(status()?.maxmind.city)} · ASN: ${stamp(status()?.maxmind.asn)}`
             }
           >
-            MaxMind: {shortDate(status()?.maxmind.last_update)}
+            MaxMind: {stamp(status()?.maxmind.last_update)}
           </span>
           <span class="text-xs text-gray-400 dark:text-gray-600">|</span>
           <span
             class="text-xs text-gray-600 dark:text-gray-400"
-            title="Next GeoLite2 refresh — a window, because the timer spreads the start over six hours"
+            title={`Earliest next GeoLite2 refresh. The timer spreads the start at random over six hours, so it lands between this and ${stamp(status()?.maxmind_next_update.until)}.`}
           >
-            Next pull: {nextRun(status()?.maxmind_next_update)}
+            Next pull: {stamp(status()?.maxmind_next_update.from)}
           </span>
           <span class="text-xs text-gray-400 dark:text-gray-600">|</span>
           <span class="text-xs text-gray-600 dark:text-gray-400">{formatCount(totalLogs())}</span>
         </div>
+
+        <Show when={piholeState() !== 'off'}>
+          <span
+            class={`h-1.5 w-1.5 shrink-0 rounded-full ${PIHOLE_DOT[piholeState()]}`}
+            title={piholeTitle()}
+            aria-label={piholeTitle()}
+          />
+        </Show>
 
         <span
           class="h-1.5 w-1.5 shrink-0 rounded-full"

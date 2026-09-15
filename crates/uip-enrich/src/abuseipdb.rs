@@ -13,6 +13,10 @@ pub struct AbuseIpDb {
     http: reqwest::Client,
     /// Verbleibendes Kontingent laut letztem Antwort-Header. -1 = unbekannt.
     remaining: AtomicI64,
+    /// Das Tageskontingent insgesamt, laut `X-RateLimit-Limit`. -1 = unbekannt.
+    limit: AtomicI64,
+    /// Unix-Sekunden, zu denen das Kontingent wieder voll ist. 0 = unbekannt.
+    reset_at: AtomicI64,
     /// Unix-Sekunden, bis zu denen nach einem 429 pausiert wird.
     paused_until: AtomicI64,
 }
@@ -31,6 +35,8 @@ impl AbuseIpDb {
                 .build()
                 .expect("reqwest client"),
             remaining: AtomicI64::new(-1),
+            limit: AtomicI64::new(-1),
+            reset_at: AtomicI64::new(0),
             paused_until: AtomicI64::new(0),
         }
     }
@@ -54,7 +60,12 @@ impl ThreatSource for AbuseIpDb {
         if !self.enabled() || remaining < 0 {
             return None;
         }
-        Some(Quota { remaining, paused_until: self.paused_until.load(Ordering::Relaxed) })
+        Some(Quota {
+            remaining,
+            limit: self.limit.load(Ordering::Relaxed),
+            reset_at: self.reset_at.load(Ordering::Relaxed),
+            paused_until: self.paused_until.load(Ordering::Relaxed),
+        })
     }
 
     async fn lookup(&self, ip: IpAddr) -> ThreatOutcome {
@@ -87,20 +98,28 @@ impl ThreatSource for AbuseIpDb {
             }
         };
 
-        if let Some(v) = res.headers().get("X-RateLimit-Remaining") {
-            if let Some(n) = v.to_str().ok().and_then(|s| s.parse::<i64>().ok()) {
-                self.remaining.store(n, Ordering::Relaxed);
-            }
+        // Alle drei Zähler aus jeder Antwort, nicht nur aus einer 429: die
+        // Statusleiste soll „987 von 1000, wieder voll um 02:00" zeigen können,
+        // solange noch Kontingent da ist — und nicht erst, wenn keines mehr da
+        // ist.
+        let header_num = |name: &str| -> Option<i64> {
+            res.headers().get(name)?.to_str().ok()?.parse::<i64>().ok()
+        };
+        if let Some(n) = header_num("X-RateLimit-Remaining") {
+            self.remaining.store(n, Ordering::Relaxed);
+        }
+        if let Some(n) = header_num("X-RateLimit-Limit") {
+            self.limit.store(n, Ordering::Relaxed);
+        }
+        if let Some(n) = header_num("X-RateLimit-Reset") {
+            self.reset_at.store(n, Ordering::Relaxed);
         }
 
         if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
             // Reset-Zeitpunkt, sonst eine Stunde Ruhe.
-            let reset = res
-                .headers()
-                .get("X-RateLimit-Reset")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<i64>().ok())
+            let reset = header_num("X-RateLimit-Reset")
                 .unwrap_or_else(|| Utc::now().timestamp() + 3600);
+            self.reset_at.store(reset, Ordering::Relaxed);
             self.paused_until.store(reset, Ordering::Relaxed);
             tracing::warn!(reset, "abuseipdb quota exhausted, pausing");
             return ThreatOutcome::QuotaExhausted;

@@ -9,6 +9,7 @@
 use chrono::{DateTime, TimeZone, Utc};
 use std::sync::Mutex;
 use std::time::Duration;
+use sqlx::PgPool;
 use tokio::sync::mpsc;
 use uip_core::types::LogType;
 use uip_core::ParsedLog;
@@ -191,7 +192,21 @@ pub fn to_log(q: &serde_json::Value) -> Option<ParsedLog> {
 }
 
 /// Dauerläufer: alle 30 Sekunden abholen und in den Writer schieben.
-pub async fn run_pihole(client: Pihole, tx: mpsc::Sender<ParsedLog>) {
+/// Hält fest, wie der letzte Abruf ausging.
+///
+/// Zugleich Herzschlag: der Zeitstempel wird bei jedem Durchlauf neu gesetzt,
+/// auch wenn nichts zu holen war. Bleibt er stehen, läuft die Schleife nicht
+/// mehr — und genau das soll der Punkt in der Kopfzeile zeigen können.
+async fn record(pool: &PgPool, ok: bool, error: Option<String>) {
+    uip_core::settings::put_config(
+        pool,
+        "pihole_status",
+        serde_json::json!({ "ok": ok, "at": Utc::now().to_rfc3339(), "error": error }),
+    )
+    .await;
+}
+
+pub async fn run_pihole(client: Pihole, tx: mpsc::Sender<ParsedLog>, pool: PgPool) {
     // Beim ersten Lauf nur die letzten fünf Minuten — sonst spült ein frisch
     // eingerichtetes Pi-hole seine gesamte Historie in die Datenbank.
     let mut since = Utc::now().timestamp() - 300;
@@ -211,8 +226,12 @@ pub async fn run_pihole(client: Pihole, tx: mpsc::Sender<ParsedLog>) {
                 if n > 0 {
                     tracing::debug!(rows = n, "pulled queries from pihole");
                 }
+                record(&pool, true, None).await;
             }
-            Err(e) => tracing::warn!(error = %e, "pihole poll failed"),
+            Err(e) => {
+                tracing::warn!(error = %e, "pihole poll failed");
+                record(&pool, false, Some(e.to_string())).await;
+            }
         }
         tokio::time::sleep(POLL_EVERY).await;
     }

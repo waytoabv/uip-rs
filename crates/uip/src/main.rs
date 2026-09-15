@@ -81,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
                     password.clone().unwrap_or_default(),
                 );
                 tracing::info!(url = %url, "pihole polling enabled");
-                tokio::spawn(uip_enrich::pihole::run_pihole(client, pihole_tx));
+                tokio::spawn(uip_enrich::pihole::run_pihole(client, pihole_tx, pool.clone()));
             }
             _ => tracing::warn!("pihole enabled but no url configured"),
         }
