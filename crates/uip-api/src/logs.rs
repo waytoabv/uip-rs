@@ -261,6 +261,38 @@ mod tests {
         assert!(body["rows"].as_array().unwrap().is_empty());
     }
 
+    /// Port und Threat-Schwelle gehen durch dieselbe Extraktion wie der Rest
+    /// — nur liegen sie im geflatteten Teil, wo serde jeden Wert als
+    /// Zeichenkette puffert. Bis das gefangen war, antwortete der Endpunkt mit
+    /// 400, und die Oberfläche zeigte eine leere Tabelle zu einem Total > 0.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn numeric_filters_reach_the_endpoint(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, src_ip, dst_port, threat_score)
+             VALUES (NOW(), 1, '1.2.3.4', 443, 80)",
+        ).execute(&pool).await.unwrap();
+        let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
+
+        let body = get_json(&app, "/api/logs?limit=50&port=443").await;
+        assert_eq!(body["rows"].as_array().unwrap().len(), 1);
+        let body = get_json(&app, "/api/logs?limit=50&port=444").await;
+        assert!(body["rows"].as_array().unwrap().is_empty());
+        let body = get_json(&app, "/api/logs?limit=50&threat_min=50").await;
+        assert_eq!(body["rows"].as_array().unwrap().len(), 1);
+
+        // Dieselbe Einbettung, drei weitere Endpunkte.
+        for url in [
+            "/api/stats/top?what=sources&limit=8&port=443",
+            "/api/flows/sankey?limit=10&port=443",
+            "/api/flows/host-detail?ip=1.2.3.4&port=443",
+        ] {
+            let res = app.clone()
+                .oneshot(Request::get(url).body(Body::empty()).unwrap())
+                .await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK, "{url}");
+        }
+    }
+
     /// `service` kommt aus der IANA-Tabelle (dst_port, protocol) und trägt
     /// die eine Anzeige-Ausnahme aus dem Vorgänger: `domain` heißt `DNS`.
     /// Ein Port ohne Eintrag liefert `null`, keinen geratenen Namen.

@@ -24,7 +24,9 @@ pub struct LogFilter {
     pub iface_in: Option<String>,
     /// Genau die ausgehende Schnittstelle.
     pub iface_out: Option<String>,
+    #[serde(deserialize_with = "opt_i32")]
     pub port: Option<i32>,
+    #[serde(deserialize_with = "opt_i32")]
     pub threat_min: Option<i32>,
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
@@ -37,6 +39,58 @@ fn comma_list<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::
     Ok(raw
         .map(|s| s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
         .unwrap_or_default())
+}
+
+/// Liest eine Zahl, die auch als Zeichenkette ankommen darf.
+///
+/// Nötig, weil vier Endpunkte den Filter mit `#[serde(flatten)]` einbetten.
+/// serde puffert dabei jeden Wert erst als `Content` — und aus einem
+/// Query-String ist das immer `Str`, denn serde_urlencoded kennt keine Typen.
+/// Ein schlichtes `Option<i32>` sieht dort nie eine Zahl und lässt den ganzen
+/// Request mit 400 scheitern, statt zu filtern.
+fn opt_i32<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i32>, D::Error> {
+    use serde::de::{Error, Visitor};
+    use std::fmt;
+
+    struct Outer;
+    impl<'de> Visitor<'de> for Outer {
+        type Value = Option<i32>;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a whole number, or a string holding one")
+        }
+        fn visit_none<E: Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_unit<E: Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+            d.deserialize_any(Inner)
+        }
+    }
+
+    struct Inner;
+    impl<'de> Visitor<'de> for Inner {
+        type Value = Option<i32>;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a whole number, or a string holding one")
+        }
+        fn visit_i64<E: Error>(self, v: i64) -> Result<Self::Value, E> {
+            i32::try_from(v).map(Some).map_err(E::custom)
+        }
+        fn visit_u64<E: Error>(self, v: u64) -> Result<Self::Value, E> {
+            i32::try_from(v).map(Some).map_err(E::custom)
+        }
+        fn visit_str<E: Error>(self, v: &str) -> Result<Self::Value, E> {
+            // Ein leer gelassenes Feld ist kein Filter, kein Fehler.
+            match v.trim() {
+                "" => Ok(None),
+                n => n.parse().map(Some).map_err(E::custom),
+            }
+        }
+    }
+
+    d.deserialize_option(Outer)
 }
 
 fn log_type_id(name: &str) -> Option<i16> {
@@ -402,6 +456,40 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(matching(&pool, &f).await, ["10.10.30.7"]);
+    }
+
+    /// `/api/logs`, `/api/stats/top`, `/api/flows/sankey` und
+    /// `/api/flows/host-detail` betten den Filter mit `#[serde(flatten)]` ein.
+    /// Dabei puffert serde jeden Wert als Zeichenkette — serde_urlencoded
+    /// kennt keine Typen —, und ein schlichtes `Option<i32>` sieht dort nie
+    /// eine Zahl: der Request scheiterte mit 400, statt zu filtern.
+    #[test]
+    fn numeric_fields_survive_a_flattened_query() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            limit: Option<i64>,
+            #[serde(flatten)]
+            filter: LogFilter,
+        }
+        let w: Wrapper =
+            serde_urlencoded::from_str("limit=50&port=443&threat_min=80&action=block").unwrap();
+        assert_eq!(w.limit, Some(50));
+        assert_eq!(w.filter.port, Some(443));
+        assert_eq!(w.filter.threat_min, Some(80));
+        assert_eq!(w.filter.action, ["block"]);
+
+        // Ohne Flatten muss es weiter gehen — so liest `/api/logs/count`.
+        let f: LogFilter = serde_urlencoded::from_str("port=443&threat_min=80").unwrap();
+        assert_eq!((f.port, f.threat_min), (Some(443), Some(80)));
+
+        // Ein leeres Feld ist kein Filter, kein Fehler.
+        let f: LogFilter = serde_urlencoded::from_str("port=&threat_min=").unwrap();
+        assert_eq!((f.port, f.threat_min), (None, None));
+
+        // Die übrigen nicht-textlichen Felder gehen denselben Weg.
+        let w: Wrapper =
+            serde_urlencoded::from_str("from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z").unwrap();
+        assert!(w.filter.from.is_some() && w.filter.to.is_some());
     }
 
     #[test]

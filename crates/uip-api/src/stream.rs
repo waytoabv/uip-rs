@@ -70,6 +70,15 @@ fn iface_verdict(active: &[String], iface_in: Option<&str>, iface_out: Option<&s
     }
 }
 
+/// Genau eine Seite, anders als `iface_verdict`: ein Zonenpaar ist gerichtet.
+fn exact_iface_verdict(want: Option<&str>, have: Option<&str>) -> Verdict {
+    match want.filter(|s| !s.is_empty()) {
+        None => Verdict::Pass,
+        Some(w) if have.is_some_and(|h| h.eq_ignore_ascii_case(w)) => Verdict::Pass,
+        Some(_) => Verdict::Reject,
+    }
+}
+
 fn port_verdict(port: Option<i32>, src: Option<i32>, dst: Option<i32>) -> Verdict {
     match port {
         None => Verdict::Pass,
@@ -246,6 +255,8 @@ pub fn matches_live(row: &LiveRow, f: &LogFilter) -> Verdict {
         list_verdict(&f.action, row.rule_action),
         list_verdict(&f.direction, row.direction),
         iface_verdict(&f.iface, row.iface_in.as_deref(), row.iface_out.as_deref()),
+        exact_iface_verdict(f.iface_in.as_deref(), row.iface_in.as_deref()),
+        exact_iface_verdict(f.iface_out.as_deref(), row.iface_out.as_deref()),
         list_verdict(&f.proto, row.protocol.as_deref()),
         port_verdict(f.port, row.src_port, row.dst_port),
         enriched_verdict(f),
@@ -331,6 +342,17 @@ mod tests {
         assert_eq!(matches_live(&row(), &f("proto=tcp")), Verdict::Pass);
         assert_eq!(matches_live(&row(), &f("port=443")), Verdict::Pass);
         assert_eq!(matches_live(&row(), &f("port=22")), Verdict::Reject);
+    }
+
+    /// `iface` trifft beide Seiten; ein Zonenpaar ist gerichtet. Ohne eigene
+    /// Prüfung liefe jede frische Zeile am Zonenfilter vorbei in die Liste.
+    #[test]
+    fn the_directed_interfaces_are_checked_separately() {
+        assert_eq!(matches_live(&row(), &f("iface_in=ppp0")), Verdict::Pass);
+        assert_eq!(matches_live(&row(), &f("iface_in=br20")), Verdict::Reject, "das ist die Gegenrichtung");
+        assert_eq!(matches_live(&row(), &f("iface_out=br20")), Verdict::Pass);
+        assert_eq!(matches_live(&row(), &f("iface_in=ppp0&iface_out=br20")), Verdict::Pass);
+        assert_eq!(matches_live(&row(), &f("iface_in=ppp0&iface_out=br99")), Verdict::Reject);
     }
 
     #[test]

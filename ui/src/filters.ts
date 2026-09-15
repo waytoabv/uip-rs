@@ -127,6 +127,8 @@ const DIRECT_PARAMS = [
   'action',
   'direction',
   'iface',
+  'iface_in',
+  'iface_out',
   'proto',
   'country',
   'port',

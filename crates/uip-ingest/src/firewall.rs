@@ -31,16 +31,24 @@ fn extract_src_mac(raw: &str) -> Option<String> {
 
 fn derive_action(rule_name: Option<&str>, rule_desc: Option<&str>) -> Option<RuleAction> {
     let name = rule_name?;
-    if let Some(last) = name.rsplit('-').next() {
-        match last {
-            "A" => return Some(RuleAction::Allow),
-            "D" => return Some(RuleAction::Block),
-            "R" => return Some(RuleAction::Redirect),
-            _ => {}
-        }
+    // Der Buchstabe ist ein eigenes Segment, aber nicht zwangsläufig das
+    // letzte: die zonenbasierte Firewall hängt ihren Index dahinter
+    // (`DMZ_LOCAL-D-10002`), der ältere Stil nicht (`WAN_IN-B-1-D`). Von
+    // rechts suchen trifft beide; nur das letzte Segment zu lesen fand ihn im
+    // ersten Fall nie und machte aus jedem Block ein Allow.
+    if let Some(letter) = name.rsplit('-').find(|seg| matches!(*seg, "A" | "D" | "R")) {
+        return Some(match letter {
+            "A" => RuleAction::Allow,
+            "D" => RuleAction::Block,
+            _ => RuleAction::Redirect,
+        });
     }
     if let Some(d) = rule_desc {
+        // UniFi stellt der Beschreibung oft die Zone voran
+        // (`[WAN_LOCAL]Block All Traffic`) — der Hinweis fängt erst dahinter
+        // an, also fällt die Klammer weg, bevor gelesen wird.
         let d = d.to_ascii_lowercase();
+        let d = d.split_once(']').map_or(d.as_str(), |(_, after)| after).trim_start();
         if d.starts_with("block") || d.starts_with("deny") || d.starts_with("drop") {
             return Some(RuleAction::Block);
         }
@@ -188,6 +196,49 @@ mod tests {
         let p = parse_firewall("kernel: SRC=not_ip DST=10.0.0.1 PROTO=TCP", &ctx());
         assert_eq!(p.src_ip, None);
         assert_eq!(p.dst_ip.unwrap().to_string(), "10.0.0.1");
+    }
+
+    /// Die zonenbasierte Firewall schreibt den Aktionsbuchstaben in die
+    /// MITTE des Regelnamens: `<ZONE>_<ZONE>-<A|D|R>-<index>`. Nur das letzte
+    /// Segment zu lesen fand ihn dort nie, und der Rückfall machte aus jeder
+    /// geblockten Zeile eine erlaubte.
+    #[test]
+    fn action_letter_sits_in_the_middle_of_a_zone_rule_name() {
+        let block = parse_firewall(
+            r#"kernel: [DMZ_LOCAL-D-10002]IN=br30 OUT=br0 SRC=10.0.30.5 DST=10.0.0.1 PROTO=TCP SPT=1 DPT=22 DESCR="DMZ To GW - Drop all Traffic""#,
+            &ctx(),
+        );
+        assert_eq!(block.rule_action, Some(RuleAction::Block));
+
+        let allow = parse_firewall(
+            r#"kernel: [CUSTOM1_WAN-A-10004]IN=br10 OUT=ppp0 SRC=10.0.10.5 DST=1.1.1.1 PROTO=UDP SPT=1 DPT=53 DESCR="VL10 -> WAN - Pihole Allow DNS""#,
+            &ctx(),
+        );
+        assert_eq!(allow.rule_action, Some(RuleAction::Allow));
+
+        let redirect = parse_firewall(
+            "kernel: [LAN_LOCAL-R-10001]IN=br0 OUT=br0 SRC=10.0.0.5 DST=1.1.1.1 PROTO=UDP SPT=1 DPT=53",
+            &ctx(),
+        );
+        assert_eq!(redirect.rule_action, Some(RuleAction::Redirect));
+    }
+
+    /// Der alte Namensstil trägt ihn am Ende — der muss weiter treffen.
+    #[test]
+    fn action_letter_at_the_end_still_wins() {
+        let p = parse_firewall("kernel: [WAN_IN-B-4000000003-D]IN=ppp0 SRC=1.2.3.4 DST=10.0.0.5 PROTO=TCP", &ctx());
+        assert_eq!(p.rule_action, Some(RuleAction::Block));
+    }
+
+    /// Ohne Buchstaben im Namen bleibt die Beschreibung — und die trägt bei
+    /// UniFi ein `[ZONE]`-Präfix, hinter dem der Hinweis erst anfängt.
+    #[test]
+    fn descr_hint_is_read_behind_a_zone_tag() {
+        let p = parse_firewall(
+            r#"kernel: [UBIOS_WAN_IN_USER]IN=ppp0 SRC=1.2.3.4 DST=10.0.0.5 PROTO=TCP DESCR="[WAN_LOCAL]Block All Traffic""#,
+            &ctx(),
+        );
+        assert_eq!(p.rule_action, Some(RuleAction::Block));
     }
 
     #[test]

@@ -56,6 +56,16 @@ suite('toQuery', () => {
     expect(params.get('range')).toBe('24h');
   });
 
+  // Die Zonenmatrix (FlowView) setzt beide beim Klick auf eine Zelle. Fehlten
+  // sie im Query-String, sah der Filter angewandt aus — Chips und Zähler
+  // zeigten ihn —, und die Liste blieb unverändert.
+  it('sendet die gerichteten Schnittstellen als eigene Parameter', () => {
+    const state: FilterState = { ...emptyFilters(), iface_in: 'LAN', iface_out: 'WAN' };
+    const params = new URLSearchParams(toQuery(state));
+    expect(params.get('iface_in')).toBe('LAN');
+    expect(params.get('iface_out')).toBe('WAN');
+  });
+
   it('verwirft ungültige Zahlen statt sie zu senden', () => {
     const state: FilterState = { ...emptyFilters(), port: 'abc', threat_min: '50' };
     const params = new URLSearchParams(toQuery(state));
