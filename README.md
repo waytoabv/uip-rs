@@ -9,6 +9,34 @@ real-time syslog analysis for UniFi gateways, rebuilt from scratch:
 - **SolidJS** frontend — fine-grained reactivity for the live log stream, no VDOM diffing
 - **Proxmox LXC** deployment — classic community install script, systemd. No Docker.
 
+## Install
+
+On the Proxmox host — the same flow as any community script: a whiptail dialog
+offering default or advanced settings, then the container, then the install:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/waytoabv/uip-rs/main/lxc/ct/uip.sh)"
+```
+
+`lxc/ct/uip.sh` and `lxc/install/uip-install.sh` follow the
+[community-scripts](https://github.com/community-scripts/ProxmoxVE) layout and
+run on their engine (`community-scripts/core`); `COMMUNITY_SCRIPTS_URL` points
+the engine at this repository so it finds `install/uip-install.sh` here rather
+than in the upstream one. Everything that is not specific to uip — storage
+selection, resource prompts, verbose mode, the error dialog and its retry —
+comes from the engine.
+
+To update, run the same script **inside** the container; it detects where it is
+and takes the update path (stop, pull, rebuild frontend then binary, swap,
+start). Migrations run at startup, so the first start after an update takes
+longer than usual.
+
+The container defaults to 2 cores, 3 GB RAM and 12 GB disk: the release build
+is the peak, not the running service. `MAXMIND_ACCOUNT_ID` and
+`MAXMIND_LICENSE_KEY` in the environment enable GeoIP; without them the map
+stays empty and everything else works. The generated database password is
+written to `~/uip.creds` and to `/etc/uip/uip.env`.
+
 ## Build
 
 The frontend is built first, then embedded into the `uip` binary via `rust-embed`
