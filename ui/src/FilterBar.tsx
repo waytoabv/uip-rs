@@ -21,21 +21,21 @@ interface Props {
 // border-<farbe>-500/30. Inaktiv sind alle Pillen gleich: transparent und
 // gedämpft.
 const LOG_TYPE_STYLES: Record<string, string> = {
-  firewall: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
-  dns: 'bg-violet-500/15 text-violet-400 border-violet-500/30',
-  dhcp: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30',
-  wifi: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-  system: 'bg-gray-500/15 text-gray-300 border-gray-500/30',
+  firewall: 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30',
+  dns: 'bg-violet-500/15 text-violet-700 dark:text-violet-400 border-violet-500/30',
+  dhcp: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400 border-cyan-500/30',
+  wifi: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30',
+  system: 'bg-gray-500/15 text-gray-700 dark:text-gray-300 border-gray-500/30',
 };
 
 const ACTION_STYLES: Record<string, string> = {
-  allow: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-  block: 'bg-red-500/20 text-red-400 border-red-500/40',
-  redirect: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
-  unknown: 'bg-gray-500/15 text-gray-400 border-gray-500/30',
+  allow: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30',
+  block: 'bg-red-500/20 text-red-700 dark:text-red-400 border-red-500/40',
+  redirect: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400 border-yellow-500/30',
+  unknown: 'bg-gray-500/15 text-gray-600 dark:text-gray-400 border-gray-500/30',
 };
 
-const INACTIVE_PILL = 'border-transparent text-gray-500 hover:text-gray-400';
+const INACTIVE_PILL = 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-400';
 
 const DIRECTION_ICONS: Record<string, string> = {
   inbound: '↓',
@@ -54,11 +54,11 @@ const DIRECTION_LABELS: Record<string, string> = {
 };
 
 const DIRECTION_COLORS: Record<string, string> = {
-  inbound: 'text-red-400',
-  outbound: 'text-blue-400',
-  inter_vlan: 'text-gray-300',
-  nat: 'text-yellow-400',
-  vpn: 'text-teal-400',
+  inbound: 'text-red-700 dark:text-red-400',
+  outbound: 'text-blue-700 dark:text-blue-400',
+  inter_vlan: 'text-gray-700 dark:text-gray-300',
+  nat: 'text-yellow-700 dark:text-yellow-400',
+  vpn: 'text-teal-700 dark:text-teal-400',
 };
 
 // Tooltip des Suchfelds. Begriffe werden UND-verknüpft, das Feld ist also
@@ -108,7 +108,7 @@ const FilterBar: Component<Props> = (props) => {
   };
 
   return (
-    <div class="space-y-3 border-b border-gray-800 bg-gray-950 px-4 py-3">
+    <div class="space-y-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-4 py-3">
       {/* Reihe 1: Log-Typ, Aktion, Richtung, Zeitraum */}
       <div class="flex flex-wrap items-center gap-4">
         <div class="flex items-center gap-1.5">
@@ -127,7 +127,7 @@ const FilterBar: Component<Props> = (props) => {
           </For>
         </div>
 
-        <div class="h-5 w-px bg-gray-700" />
+        <div class="h-5 w-px bg-gray-300 dark:bg-gray-700" />
 
         <div class="flex items-center gap-1.5">
           <For each={ACTIONS}>
@@ -145,7 +145,7 @@ const FilterBar: Component<Props> = (props) => {
           </For>
         </div>
 
-        <div class="h-5 w-px bg-gray-700" />
+        <div class="h-5 w-px bg-gray-300 dark:bg-gray-700" />
 
         <div class="flex items-center gap-1">
           <For each={DIRECTIONS}>
@@ -156,7 +156,7 @@ const FilterBar: Component<Props> = (props) => {
                   type="button"
                   onClick={() => toggleDirection(d)}
                   class={`rounded px-2 py-1 text-xs font-medium uppercase transition-all ${
-                    active() ? 'border border-gray-600 bg-black text-white' : 'text-gray-500 hover:text-gray-400'
+                    active() ? 'border border-gray-400 dark:border-gray-600 bg-white dark:bg-black text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-400'
                   }`}
                 >
                   <span classList={{ [DIRECTION_COLORS[d]]: active() }}>{DIRECTION_ICONS[d]}</span>{' '}
@@ -167,7 +167,7 @@ const FilterBar: Component<Props> = (props) => {
           </For>
         </div>
 
-        <div class="h-5 w-px bg-gray-700" />
+        <div class="h-5 w-px bg-gray-300 dark:bg-gray-700" />
 
         <div class="flex items-center gap-1">
           <For each={RANGE_OPTIONS}>
@@ -177,8 +177,8 @@ const FilterBar: Component<Props> = (props) => {
                 onClick={() => set('range', r.value)}
                 class={`rounded px-2 py-1 text-xs font-medium transition-all ${
                   props.filters.range === r.value
-                    ? 'border border-gray-600 bg-black text-white'
-                    : 'text-gray-400 hover:text-gray-300'
+                    ? 'border border-gray-400 dark:border-gray-600 bg-white dark:bg-black text-gray-900 dark:text-white'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-300'
                 }`}
               >
                 {r.label}
@@ -192,7 +192,7 @@ const FilterBar: Component<Props> = (props) => {
             type="button"
             disabled
             title="Custom date range — not available yet"
-            class="cursor-not-allowed rounded px-2 py-1 text-xs font-medium text-gray-600 opacity-50"
+            class="cursor-not-allowed rounded px-2 py-1 text-xs font-medium text-gray-700 dark:text-gray-400 dark:text-gray-600 opacity-50"
           >
             Custom
           </button>
@@ -207,7 +207,7 @@ const FilterBar: Component<Props> = (props) => {
         <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           <Show
             when={describe(props.filters).length > 0}
-            fallback={<span class="py-1 text-[11px] text-gray-600">No filters</span>}
+            fallback={<span class="py-1 text-[11px] text-gray-700 dark:text-gray-400 dark:text-gray-600">No filters</span>}
           >
             <For each={describe(props.filters)}>
               {(chip) => (
@@ -226,7 +226,7 @@ const FilterBar: Component<Props> = (props) => {
             </For>
             <button
               type="button"
-              class="px-1.5 py-0.5 text-[11px] text-gray-500 hover:text-gray-300"
+              class="px-1.5 py-0.5 text-[11px] text-gray-500 hover:text-gray-900 dark:hover:text-gray-300"
               onClick={() => {
                 setDraft('');
                 props.onChange(emptyFilters());
@@ -255,15 +255,15 @@ const FilterBar: Component<Props> = (props) => {
                   setDraft('');
                 }
               }}
-              class="w-full rounded border border-gray-700 bg-black py-1.5 pl-7 pr-7 text-xs text-gray-300 placeholder-gray-500 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+              class="w-full rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-black py-1.5 pl-7 pr-7 text-xs text-gray-700 dark:text-gray-300 placeholder-gray-400 dark:placeholder-gray-500 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
             />
-            <span class="absolute left-2.5 top-1.5 text-xs text-gray-600">⌕</span>
+            <span class="absolute left-2.5 top-1.5 text-xs text-gray-700 dark:text-gray-400 dark:text-gray-600">⌕</span>
             <Show when={draft()}>
               <button
                 type="button"
                 aria-label="Clear search"
                 onClick={() => setDraft('')}
-                class="absolute right-2 top-1.5 text-xs text-gray-500 hover:text-gray-300"
+                class="absolute right-2 top-1.5 text-xs text-gray-500 hover:text-gray-900 dark:hover:text-gray-300"
               >
                 ✕
               </button>
@@ -277,8 +277,8 @@ const FilterBar: Component<Props> = (props) => {
               onClick={() => setShowPanel((v) => !v)}
               class={`whitespace-nowrap rounded border px-3 py-1.5 text-xs transition-colors ${
                 activeCount() > 0
-                  ? 'border-teal-500/60 bg-teal-500/10 text-teal-300'
-                  : 'border-gray-700 text-gray-400 hover:text-gray-200'
+                  ? 'border-teal-500/60 bg-teal-500/10 text-teal-700 dark:text-teal-300'
+                  : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
               }`}
             >
               Filters{activeCount() > 0 ? ` (${activeCount()})` : ''}

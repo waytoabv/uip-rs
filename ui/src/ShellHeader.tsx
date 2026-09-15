@@ -65,7 +65,7 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
   });
 
   return (
-    <header class="flex items-center justify-between gap-4 border-b border-gray-800 bg-gray-950 px-4 py-2">
+    <header class="flex items-center justify-between gap-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-4 py-2">
       <div class="flex min-w-0 flex-1 items-center gap-4 overflow-x-auto [&::-webkit-scrollbar]:hidden">
         <div class="flex shrink-0 items-center gap-2">
           <span
@@ -74,7 +74,7 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
           >
             U
           </span>
-          <span class="hidden text-sm font-semibold text-gray-200 sm:inline">UniFi Log Insight</span>
+          <span class="hidden text-sm font-semibold text-gray-800 dark:text-gray-200 sm:inline">UniFi Log Insight</span>
         </div>
 
         <nav class="flex items-center gap-0.5">
@@ -84,8 +84,8 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
                 type="button"
                 onClick={() => props.onSelectView(tab.id)}
                 classList={{
-                  'bg-gray-800 text-white': props.activeView === tab.id,
-                  'text-gray-400 hover:text-gray-200': props.activeView !== tab.id,
+                  'bg-gray-200 text-gray-900 dark:bg-gray-800 dark:text-white': props.activeView === tab.id,
+                  'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200': props.activeView !== tab.id,
                 }}
                 class="rounded px-3 py-1.5 text-sm font-medium transition-colors"
               >
@@ -98,13 +98,13 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
 
       <div class="flex shrink-0 items-center gap-3">
         <div class="hidden items-center gap-3 md:flex">
-          <span class="text-xs text-gray-400">AbuseIPDB: {'—'}</span>
-          <span class="text-xs text-gray-600">|</span>
-          <span class="text-xs text-gray-400">MaxMind: {'—'}</span>
-          <span class="text-xs text-gray-600">|</span>
-          <span class="text-xs text-gray-400">Next pull: {'—'}</span>
-          <span class="text-xs text-gray-600">|</span>
-          <span class="text-xs text-gray-400">{formatCount(totalLogs())}</span>
+          <span class="text-xs text-gray-600 dark:text-gray-400">AbuseIPDB: {'—'}</span>
+          <span class="text-xs text-gray-400 dark:text-gray-600">|</span>
+          <span class="text-xs text-gray-600 dark:text-gray-400">MaxMind: {'—'}</span>
+          <span class="text-xs text-gray-400 dark:text-gray-600">|</span>
+          <span class="text-xs text-gray-600 dark:text-gray-400">Next pull: {'—'}</span>
+          <span class="text-xs text-gray-400 dark:text-gray-600">|</span>
+          <span class="text-xs text-gray-600 dark:text-gray-400">{formatCount(totalLogs())}</span>
         </div>
 
         <span
@@ -116,7 +116,7 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
         <button
           type="button"
           onClick={props.onToggleTheme}
-          class="rounded p-1.5 text-gray-400 transition-colors hover:bg-gray-800 hover:text-gray-200"
+          class="rounded p-1.5 text-gray-600 dark:text-gray-400 transition-colors hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-200"
           title={props.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
           {props.theme === 'dark' ? (
@@ -137,7 +137,7 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
         <button
           type="button"
           disabled
-          class="cursor-not-allowed rounded p-1.5 text-gray-600 opacity-50"
+          class="cursor-not-allowed rounded p-1.5 text-gray-400 dark:text-gray-600 opacity-50"
           title="Settings (Phase 4)"
         >
           <svg

@@ -64,8 +64,8 @@ function Segmented(props: {
             onClick={() => props.onPick(opt)}
             class={`rounded border px-2.5 py-1 text-[11px] transition-colors ${
               props.value === opt
-                ? 'border-teal-500/60 bg-teal-500/10 text-teal-300'
-                : 'border-gray-700 text-gray-400 hover:text-gray-200'
+                ? 'border-teal-500/60 bg-teal-500/10 text-teal-700 dark:text-teal-300'
+                : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
             }`}
           >
             {opt === '' ? 'Any' : (props.labels?.[opt] ?? opt)}
@@ -128,10 +128,10 @@ export default function FilterPanel(props: {
     <div
       ref={root}
       class="absolute right-0 top-full z-30 mt-2 w-[26rem] max-w-[calc(100vw-2rem)]
-             rounded-lg border border-gray-700 bg-gray-950 p-3 shadow-xl"
+             rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 p-3 shadow-xl"
     >
       <div class="mb-3 flex items-center justify-between">
-        <span class="text-xs font-medium text-gray-200">Filters</span>
+        <span class="text-xs font-medium text-gray-800 dark:text-gray-200">Filters</span>
         <span class="text-[10px] text-gray-500">* matches any characters</span>
       </div>
 
@@ -139,7 +139,7 @@ export default function FilterPanel(props: {
         <For each={FIELDS}>
           {(f) => (
             <label class="flex items-center gap-2">
-              <span class="w-24 shrink-0 text-[11px] text-gray-400">{f.label}</span>
+              <span class="w-24 shrink-0 text-[11px] text-gray-600 dark:text-gray-400">{f.label}</span>
               <button
                 type="button"
                 aria-pressed={drafts()[f.key].negated}
@@ -152,7 +152,7 @@ export default function FilterPanel(props: {
                 class={`w-12 shrink-0 rounded border text-[11px] font-medium transition-colors ${
                   drafts()[f.key].negated
                     ? 'border-amber-500/60 bg-amber-500/20 text-amber-300'
-                    : 'border-gray-700 bg-black text-gray-600 hover:text-gray-400'
+                    : 'border-gray-300 dark:border-gray-700 bg-white dark:bg-black text-gray-400 dark:text-gray-600 hover:text-gray-700 dark:hover:text-gray-400'
                 }`}
               >
                 {drafts()[f.key].negated ? 'is not' : 'is'}
@@ -168,19 +168,19 @@ export default function FilterPanel(props: {
                     apply();
                   }
                 }}
-                class="min-w-0 flex-1 rounded border border-gray-700 bg-black px-2 py-1 text-[11px]
-                       text-gray-300 placeholder-gray-600 focus:border-teal-500 focus:outline-none"
+                class="min-w-0 flex-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-black px-2 py-1 text-[11px]
+                       text-gray-700 dark:text-gray-300 placeholder-gray-400 dark:placeholder-gray-600 focus:border-teal-500 focus:outline-none"
               />
             </label>
           )}
         </For>
 
         <div class="flex items-center gap-2 pt-1">
-          <span class="w-24 shrink-0 text-[11px] text-gray-400">Action</span>
+          <span class="w-24 shrink-0 text-[11px] text-gray-600 dark:text-gray-400">Action</span>
           <Segmented options={ACTIONS} value={action()} onPick={setAction} />
         </div>
         <div class="flex items-center gap-2">
-          <span class="w-24 shrink-0 text-[11px] text-gray-400">Direction</span>
+          <span class="w-24 shrink-0 text-[11px] text-gray-600 dark:text-gray-400">Direction</span>
           <Segmented
             options={DIRECTIONS}
             labels={{ inter_vlan: 'Inter-VLAN' }}
@@ -190,12 +190,12 @@ export default function FilterPanel(props: {
         </div>
       </div>
 
-      <div class="mt-3 flex items-center justify-end gap-2 border-t border-gray-800 pt-2.5">
+      <div class="mt-3 flex items-center justify-end gap-2 border-t border-gray-200 dark:border-gray-800 pt-2.5">
         <Show when={anySet()}>
           <button
             type="button"
             onClick={clearAll}
-            class="px-2 py-1 text-[11px] text-gray-500 hover:text-gray-300"
+            class="px-2 py-1 text-[11px] text-gray-500 hover:text-gray-900 dark:hover:text-gray-300"
           >
             Clear
           </button>
@@ -203,14 +203,14 @@ export default function FilterPanel(props: {
         <button
           type="button"
           onClick={props.onClose}
-          class="rounded border border-gray-700 px-2.5 py-1 text-[11px] text-gray-400 hover:text-gray-200"
+          class="rounded border border-gray-300 dark:border-gray-700 px-2.5 py-1 text-[11px] text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200"
         >
           Cancel
         </button>
         <button
           type="button"
           onClick={apply}
-          class="rounded border border-teal-500/60 bg-teal-500/10 px-2.5 py-1 text-[11px] text-teal-300 hover:bg-teal-500/20"
+          class="rounded border border-teal-500/60 bg-teal-500/10 px-2.5 py-1 text-[11px] text-teal-700 dark:text-teal-300 hover:bg-teal-500/20"
         >
           Apply
         </button>
