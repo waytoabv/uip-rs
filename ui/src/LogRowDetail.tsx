@@ -7,8 +7,8 @@ import { type LogEntry } from './LogsView';
 function Field(props: { label: string; children: unknown }) {
   return (
     <div class="min-w-0">
-      <div class="text-[10px] uppercase tracking-wider text-gray-500 mb-0.5">{props.label}</div>
-      <div class="text-[13px] text-gray-200 break-words">{props.children as never}</div>
+      <div class="text-[12px] uppercase tracking-wider text-gray-400 mb-0.5">{props.label}</div>
+      <div class="text-sm text-gray-600 dark:text-gray-300 break-words">{props.children as never}</div>
     </div>
   );
 }
@@ -23,7 +23,7 @@ export default function LogRowDetail(props: { log: LogEntry }) {
   const l = () => props.log;
 
   return (
-    <div class="px-4 py-3 bg-gray-900/40 border-y border-gray-800/70 grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
+    <div class="px-4 py-3 bg-gray-50/60 dark:bg-gray-900/40 border-y border-gray-200/70 dark:border-gray-800/70 grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
       <Field label="Source IP">
         {l().src_ip ?? '—'}
         {l().src_port != null ? `:${l().src_port}` : ''}
@@ -45,6 +45,14 @@ export default function LogRowDetail(props: { log: LogEntry }) {
           </Show>
         </Show>
       </Field>
+      <Field label="ASN">
+        <Show when={l().asn_name} fallback="—">
+          {l().asn_name}
+          <Show when={l().asn_number != null}>
+            <span class="text-gray-500 ml-1.5">AS{l().asn_number}</span>
+          </Show>
+        </Show>
+      </Field>
       <Field label="Protocol">{l().protocol?.toUpperCase() ?? '—'}</Field>
 
       <Field label="Rule">
@@ -57,7 +65,7 @@ export default function LogRowDetail(props: { log: LogEntry }) {
         </Show>
       </Field>
       <Field label="Service">
-        {serviceName(l().dst_port)}
+        {l().service ?? serviceName(l().dst_port)}
         <Show when={l().dst_port != null}>
           <span class="text-gray-500"> (port {l().dst_port})</span>
         </Show>
@@ -84,7 +92,7 @@ export default function LogRowDetail(props: { log: LogEntry }) {
 
       <div class="col-span-2 sm:col-span-4">
         <Field label="Raw Log">
-          <pre class="whitespace-pre-wrap break-all text-[11px] text-gray-400 font-mono bg-black/30 rounded p-2 mt-1">
+          <pre class="whitespace-pre-wrap break-all text-[11px] text-gray-600 dark:text-gray-400 font-mono bg-gray-100 dark:bg-black/30 rounded p-2 mt-1">
             {l().raw_log ?? '—'}
           </pre>
         </Field>
