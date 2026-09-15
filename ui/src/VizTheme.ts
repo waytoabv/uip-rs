@@ -8,7 +8,12 @@ function readIsDark(): boolean {
   const explicit = document.documentElement.dataset.theme;
   if (explicit === 'light') return false;
   if (explicit === 'dark') return true;
-  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  // `matchMedia` fehlt in manchen Umgebungen (jsdom etwa). Eine fehlende
+  // Browser-Fähigkeit darf die Ansicht nicht mitreißen — ohne sie gilt der
+  // Standard der Anwendung, und der ist dunkel.
+  return typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-color-scheme: dark)').matches
+    : true;
 }
 
 /**
@@ -32,12 +37,15 @@ export function useIsDark(): () => boolean {
     const observer = new MutationObserver(update);
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    media.addEventListener('change', update);
+    const media =
+      typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-color-scheme: dark)')
+        : null;
+    media?.addEventListener('change', update);
 
     onCleanup(() => {
       observer.disconnect();
-      media.removeEventListener('change', update);
+      media?.removeEventListener('change', update);
     });
   });
 
