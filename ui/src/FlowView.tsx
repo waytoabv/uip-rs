@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, Show, type Component } from 'solid-js';
 import { sankeyLinkHorizontal } from 'd3-sankey';
+import VizPairs from './VizPairs';
 import {
   computeLayout,
   HEADER_HEIGHT,
@@ -29,10 +30,11 @@ interface ZonesResponse {
   cells: ZoneCell[];
 }
 
-type PanelKey = 'sankey' | 'zones';
+type PanelKey = 'sankey' | 'zones' | 'pairs';
 const PANELS: { key: PanelKey; label: string }[] = [
   { key: 'sankey', label: 'Flow Graph' },
   { key: 'zones', label: 'Zone Matrix' },
+  { key: 'pairs', label: 'IP Pairs' },
 ];
 
 // Eine Farbe je Knotenart — wie die Spaltenfarben des Originals (Quelle
@@ -184,8 +186,8 @@ const FlowView: Component<Props> = (props) => {
               aria-pressed={panel() === p.key}
               class={
                 panel() === p.key
-                  ? 'rounded border border-gray-600 bg-black px-3 py-1.5 text-xs font-medium text-white'
-                  : 'rounded border border-transparent px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-300'
+                  ? 'rounded border border-gray-400 dark:border-gray-600 bg-white dark:bg-black px-3 py-1.5 text-xs font-medium text-gray-900 dark:text-white'
+                  : 'rounded border border-transparent px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-900 dark:hover:text-gray-300'
               }
             >
               {p.label}
@@ -195,9 +197,9 @@ const FlowView: Component<Props> = (props) => {
       </div>
 
       <Show when={panel() === 'sankey'}>
-        <div class="overflow-hidden rounded-lg border border-gray-800 bg-gray-950">
-          <div class="flex h-11 items-center gap-3 border-b border-gray-800 px-4">
-            <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-300">Flow Graph</h3>
+        <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
+          <div class="flex h-11 items-center gap-3 border-b border-gray-200 dark:border-gray-800 px-4">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-700 dark:text-gray-300">Flow Graph</h3>
           </div>
           <div class="overflow-x-auto p-3">
             {sankeyData().nodes.length === 0 ? (
@@ -287,7 +289,7 @@ const FlowView: Component<Props> = (props) => {
                             y={labelPos.y}
                             dy="0.32em"
                             text-anchor={labelPos.anchor}
-                            class="fill-gray-200"
+                            class="fill-gray-800 dark:fill-gray-200"
                             style={{ 'font-size': '11px', 'font-weight': 500 }}
                           >
                             {n.label}
@@ -304,9 +306,9 @@ const FlowView: Component<Props> = (props) => {
       </Show>
 
       <Show when={panel() === 'zones'}>
-        <div class="overflow-hidden rounded-lg border border-gray-800 bg-gray-950">
-          <div class="flex h-11 items-center gap-3 border-b border-gray-800 px-4">
-            <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-300">Zone Traffic Matrix</h3>
+        <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
+          <div class="flex h-11 items-center gap-3 border-b border-gray-200 dark:border-gray-800 px-4">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-700 dark:text-gray-300">Zone Traffic Matrix</h3>
           </div>
           <div class="overflow-auto p-4">
             {zonesData().zones.length === 0 ? (
@@ -322,9 +324,9 @@ const FlowView: Component<Props> = (props) => {
                   </tr>
                   <tr>
                     <td class="w-4" />
-                    <td class="rounded-tl-lg bg-gray-800" />
+                    <td class="rounded-tl-lg bg-gray-100 dark:bg-gray-800" />
                     <For each={zonesData().zones}>
-                      {(z) => <td class="whitespace-nowrap rounded-t-lg bg-gray-800 px-3 py-2.5 text-center font-medium text-gray-300">{z}</td>}
+                      {(z) => <td class="whitespace-nowrap rounded-t-lg bg-gray-100 dark:bg-gray-800 px-3 py-2.5 text-center font-medium text-gray-700 dark:text-gray-300">{z}</td>}
                     </For>
                   </tr>
                   <For each={zonesData().zones}>
@@ -339,7 +341,7 @@ const FlowView: Component<Props> = (props) => {
                             <div class="flex h-full items-center justify-center">Source</div>
                           </td>
                         </Show>
-                        <td class="whitespace-nowrap rounded-l-lg bg-gray-800 px-3 py-2.5 text-right font-medium text-gray-300">{from}</td>
+                        <td class="whitespace-nowrap rounded-l-lg bg-gray-100 dark:bg-gray-800 px-3 py-2.5 text-right font-medium text-gray-700 dark:text-gray-300">{from}</td>
                         <For each={zonesData().zones}>
                           {(to) => {
                             const cell = () => cellIndex().get(`${from}|${to}`);
@@ -371,7 +373,7 @@ const FlowView: Component<Props> = (props) => {
                                     {cell()!.blocked > 0 ? <span class="text-red-200"> / {cell()!.blocked.toLocaleString()}</span> : null}
                                   </button>
                                 ) : (
-                                  <div class="px-3 py-2.5 text-center text-gray-700">–</div>
+                                  <div class="px-3 py-2.5 text-center text-gray-700 dark:text-gray-300">–</div>
                                 )}
                               </td>
                             );
@@ -386,6 +388,10 @@ const FlowView: Component<Props> = (props) => {
           </div>
         </div>
       </Show>
+      <Show when={panel() === 'pairs'}>
+        <VizPairs query={props.query} onFilter={props.onFilter} />
+      </Show>
+
     </div>
   );
 };

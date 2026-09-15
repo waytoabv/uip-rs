@@ -64,8 +64,8 @@ const DIRECTION_ICONS: Record<string, string> = {
   inbound: '↓', outbound: '↑', inter_vlan: '⇔', nat: '⤴', local: '⟳', vpn: '⛨',
 };
 const DIRECTION_COLORS: Record<string, string> = {
-  inbound: 'text-red-400', outbound: 'text-blue-400', inter_vlan: 'text-gray-300',
-  nat: 'text-yellow-400', local: 'text-gray-400', vpn: 'text-teal-400',
+  inbound: 'text-red-400', outbound: 'text-blue-400', inter_vlan: 'text-gray-700 dark:text-gray-300',
+  nat: 'text-yellow-400', local: 'text-gray-600 dark:text-gray-400', vpn: 'text-teal-400',
 };
 
 const EMPTY_STATS: Stats = { total: 0, blocked: 0, allowed: 0, by_type: {}, by_direction: {}, unique_sources: 0, threats: 0 };
@@ -212,7 +212,7 @@ export default function Dashboard(props: { query: string; onFilter: (patch: Reco
                     onClick={() => props.onFilter({ direction: dir })}
                     class={`${PILL} border-transparent bg-[var(--surface)] hover:bg-[var(--surface-hover)]`}
                   >
-                    <span class={DIRECTION_COLORS[dir] ?? 'text-gray-400'}>
+                    <span class={DIRECTION_COLORS[dir] ?? 'text-gray-600 dark:text-gray-400'}>
                       {DIRECTION_ICONS[dir] ?? ''}
                     </span>{' '}
                     <span class="uppercase text-[var(--muted)]">

@@ -41,6 +41,7 @@ pub fn router(pool: PgPool, events: broadcast::Sender<Arc<LiveRow>>) -> Router {
         .route("/api/stats", get(dashboard::get_stats))
         .route("/api/stats/series", get(dashboard::get_series))
         .route("/api/stats/top", get(dashboard::get_top))
+        .route("/api/stats/ip-pairs", get(dashboard::get_ip_pairs))
         .route("/api/threats/points", get(threats::get_points))
         .route("/api/flows/sankey", get(flows::get_sankey))
         .route("/api/flows/zones", get(flows::get_zones))

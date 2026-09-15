@@ -1,11 +1,11 @@
-import { createEffect, createMemo, createSignal, Match, Switch } from 'solid-js';
+import { createEffect, createMemo, createSignal, Match, Show, Switch } from 'solid-js';
 import Dashboard from './Dashboard';
 import FilterBar from './FilterBar';
 import FlowView from './FlowView';
 import LogsView from './LogsView';
 import ShellHeader, { type NavTab } from './ShellHeader';
 import ThreatMap from './ThreatMap';
-import { emptyFilters, toQuery, type FilterState } from './filters';
+import { describe, emptyFilters, toQuery, type FilterState } from './filters';
 
 const THEME_KEY = 'uip-theme';
 
@@ -35,6 +35,16 @@ export default function App() {
   const [view, setView] = createSignal<View>('logs');
   // `null` heißt: keine gespeicherte Wahl, die Systemeinstellung gilt.
   const [theme, setTheme] = createSignal<Theme | null>(storedTheme());
+  // Die Filterleiste ist im Log offen — dort filtert man laufend. In den
+  // anderen Ansichten kostet sie nur Höhe, die den Diagrammen fehlt, also
+  // startet sie dort eingeklappt. Wer sie aufklappt, behält sie beim
+  // Ansichtswechsel nicht: die Vorgabe richtet sich nach der Ansicht.
+  const [filtersOpen, setFiltersOpen] = createSignal(true);
+
+  const showView = (v: View) => {
+    setView(v);
+    setFiltersOpen(v === 'logs');
+  };
 
   const query = createMemo(() => toQuery(filters()));
 
@@ -63,8 +73,29 @@ export default function App() {
 
   return (
     <div class="flex h-dvh flex-col bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-200">
-      <ShellHeader tabs={TABS} activeView={view()} onSelectView={setView} theme={effectiveTheme()} onToggleTheme={toggleTheme} />
-      <FilterBar filters={filters()} onChange={setFilters} />
+      <ShellHeader tabs={TABS} activeView={view()} onSelectView={showView} theme={effectiveTheme()} onToggleTheme={toggleTheme} />
+      <div class="flex items-center gap-2 border-b border-gray-200 px-4 py-1.5 dark:border-gray-800">
+        <button
+          type="button"
+          aria-expanded={filtersOpen()}
+          onClick={() => setFiltersOpen((v) => !v)}
+          class="flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
+        >
+          <span class={`inline-block transition-transform ${filtersOpen() ? 'rotate-90' : ''}`}>›</span>
+          Filters
+        </button>
+        {/* Eingeklappt muss ablesbar bleiben, dass überhaupt gefiltert wird —
+            sonst sucht man den Grund für eine kurze Liste an der falschen
+            Stelle. */}
+        <Show when={!filtersOpen() && describe(filters()).length > 0}>
+          <span class="text-[11px] text-teal-700 dark:text-teal-300">
+            {describe(filters()).length} active
+          </span>
+        </Show>
+      </div>
+      <Show when={filtersOpen()}>
+        <FilterBar filters={filters()} onChange={setFilters} />
+      </Show>
       <main class="flex-1 overflow-auto">
         <Switch>
           <Match when={view() === 'logs'}>

@@ -160,7 +160,7 @@ function Row(props: { label: string; value: JSX.Element | string | null | undefi
     <Show when={props.value}>
       <div class="flex items-baseline justify-between gap-2 py-0.5">
         <span class="shrink-0 text-xs text-gray-500">{props.label}</span>
-        <span class="truncate text-right text-xs text-gray-700 dark:text-gray-200">{props.value}</span>
+        <span class="truncate text-right text-xs text-gray-700 dark:text-gray-300 dark:text-gray-200">{props.value}</span>
       </div>
     </Show>
   );
@@ -169,7 +169,7 @@ function Row(props: { label: string; value: JSX.Element | string | null | undefi
 function Section(props: { title: string; children: JSX.Element }) {
   return (
     <div class="border-t border-gray-200/70 px-3 py-2 dark:border-gray-800/50">
-      <div class="mb-1 text-xs uppercase tracking-wider text-gray-400">{props.title}</div>
+      <div class="mb-1 text-xs uppercase tracking-wider text-gray-600 dark:text-gray-400">{props.title}</div>
       {props.children}
     </div>
   );
@@ -183,7 +183,7 @@ function LogDetail(props: { log: LogRow; onBack: () => void }) {
       <button
         type="button"
         onClick={props.onBack}
-        class="flex shrink-0 items-center gap-1 border-b border-gray-200/70 px-3 py-1.5 text-xs text-gray-400 hover:text-gray-700 dark:border-gray-800/50 dark:hover:text-gray-200"
+        class="flex shrink-0 items-center gap-1 border-b border-gray-200/70 px-3 py-1.5 text-xs text-gray-600 dark:text-gray-400 hover:text-gray-700 dark:border-gray-800/50 dark:hover:text-gray-200"
       >
         ← Zurück zur Liste
       </button>
@@ -361,7 +361,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                 class={
                   viewMode() === v.id
                     ? 'rounded border border-gray-300 bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-900 dark:border-gray-600 dark:bg-black dark:text-white'
-                    : 'rounded border border-transparent px-2.5 py-1 text-xs font-medium text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+                    : 'rounded border border-transparent px-2.5 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
                 }
               >
                 {v.label}
@@ -369,13 +369,13 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
             )}
           </For>
         </div>
-        <div class="ml-auto flex items-center gap-3 text-xs text-gray-400">
+        <div class="ml-auto flex items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
           <Show when={!loaded()}>
             <span class="text-blue-600 dark:text-blue-400">Lädt…</span>
           </Show>
           <Show when={loaded()}>
             <span>{points().length.toLocaleString()} locations</span>
-            <span class="text-gray-300 dark:text-gray-700">|</span>
+            <span class="text-gray-700 dark:text-gray-300 dark:text-gray-700">|</span>
             <span>{totalEvents().toLocaleString()} Ereignisse</span>
           </Show>
         </div>
@@ -450,8 +450,8 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
           {/* Leerzustand */}
           <Show when={loaded() && points().length === 0}>
             <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div class="max-w-xs rounded-lg border border-gray-800 bg-gray-950/90 px-6 py-4 text-center">
-                <div class="text-sm font-medium text-gray-300">Keine Geodaten</div>
+              <div class="max-w-xs rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950/90 px-6 py-4 text-center">
+                <div class="text-sm font-medium text-gray-700 dark:text-gray-300">Keine Geodaten</div>
                 <div class="mt-1 text-xs text-gray-500">
                   {blockedTotal() === 0
                     ? 'No blocked traffic in this window — the map simply has nothing to show.'
@@ -464,7 +464,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
 
           {/* Legende — je nach Ansicht Dichte-Rampe oder Bedrohungsstufen */}
           <Show when={points().length > 0}>
-            <div class="pointer-events-none absolute bottom-4 left-4 rounded-lg border border-gray-800 bg-gray-950/90 px-3 py-2">
+            <div class="pointer-events-none absolute bottom-4 left-4 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950/90 px-3 py-2">
               <Show
                 when={viewMode() === 'clusters'}
                 fallback={
@@ -474,7 +474,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                         hier ist deshalb immer die dunkle Fassung, unabhängig
                         von `pointColor()`, das auf der eigentlichen Karte
                         zwischen hell/dunkel wechselt. */}
-                    <div class="mb-1.5 text-[10px] uppercase tracking-wider text-gray-400">Ereignisdichte</div>
+                    <div class="mb-1.5 text-[10px] uppercase tracking-wider text-gray-600 dark:text-gray-400">Ereignisdichte</div>
                     <div class="h-2 w-28 rounded-full" style={{ background: heatGradientCss.dark }} />
                     <div class="mt-0.5 flex w-28 justify-between text-[9px] text-gray-500">
                       <span>Weniger</span>
@@ -483,8 +483,8 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                   </>
                 }
               >
-                <div class="mb-1.5 text-[10px] uppercase tracking-wider text-gray-400">Bedrohungsstufe</div>
-                <div class="flex max-w-[220px] flex-wrap items-center gap-2 text-[10px] text-gray-200">
+                <div class="mb-1.5 text-[10px] uppercase tracking-wider text-gray-600 dark:text-gray-400">Bedrohungsstufe</div>
+                <div class="flex max-w-[220px] flex-wrap items-center gap-2 text-[10px] text-gray-800 dark:text-gray-200">
                   <For each={[...THREAT_LEVELS].reverse()}>
                     {(t) => (
                       <span class="flex items-center gap-1">
@@ -503,10 +503,10 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
         {/* Seitenleiste — Ereignisse am angeklickten Ort */}
         <Show when={selected()}>
           {(loc) => (
-            <div class="flex max-h-[34rem] w-72 shrink-0 flex-col border-l border-gray-800 bg-gray-950">
-              <div class="flex shrink-0 items-center justify-between border-b border-gray-800 px-3 py-2">
+            <div class="flex max-h-[34rem] w-72 shrink-0 flex-col border-l border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
+              <div class="flex shrink-0 items-center justify-between border-b border-gray-200 dark:border-gray-800 px-3 py-2">
                 <div class="min-w-0">
-                  <div class="flex items-center gap-1.5 truncate text-sm font-medium text-gray-200">
+                  <div class="flex items-center gap-1.5 truncate text-sm font-medium text-gray-800 dark:text-gray-200">
                     <CountryFlag code={loc().country} />
                     {[loc().city, countryName(loc().country)].filter(Boolean).join(', ') || 'Unbekannt'}
                   </div>
@@ -518,7 +518,7 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                 <button
                   type="button"
                   onClick={() => setSelected(null)}
-                  class="shrink-0 p-1 text-gray-500 hover:text-gray-300"
+                  class="shrink-0 p-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-300"
                   title="Schließen"
                 >
                   ×
@@ -545,15 +545,15 @@ export default function ThreatMap(props: { query: string; onFilter: (patch: Reco
                         <button
                           type="button"
                           onClick={() => setSelectedLogId(log.id)}
-                          class="w-full border-b border-gray-800/50 px-3 py-2 text-left transition-colors hover:bg-gray-800/30"
+                          class="w-full border-b border-gray-200 dark:border-gray-800/50 px-3 py-2 text-left transition-colors hover:bg-gray-200 dark:hover:bg-gray-800/30"
                         >
                           <div class="flex items-center justify-between gap-2">
-                            <span class="flex-1 truncate text-xs text-gray-200">
+                            <span class="flex-1 truncate text-xs text-gray-800 dark:text-gray-200">
                               {log.src_ip}
                               {log.src_port != null ? `:${log.src_port}` : ''}
                             </span>
                             <Show when={log.threat_score != null}>
-                              <span class={levelFor(log.threat_score)?.text ?? 'text-gray-400'}>{log.threat_score}</span>
+                              <span class={levelFor(log.threat_score)?.text ?? 'text-gray-600 dark:text-gray-400'}>{log.threat_score}</span>
                             </Show>
                           </div>
                           <div class="mt-0.5 flex items-center justify-between gap-2">

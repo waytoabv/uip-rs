@@ -421,6 +421,53 @@ mod tests {
         crate::router(pool, tokio::sync::broadcast::channel(8).0)
     }
 
+
+    /// Die Paarliste beantwortet "wer spricht mit wem" — dafür muss sie
+    /// gleiche Paare wirklich zusammenfassen und erlaubt/blockiert getrennt
+    /// zählen, sonst sagt eine Zeile mit beidem nichts aus.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn ip_pairs_group_and_split_by_action(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO protocols (name) VALUES ('tcp')").execute(&pool).await.unwrap();
+        // Dreimal dasselbe Paar: zweimal erlaubt, einmal blockiert.
+        for action in [1i16, 1, 2] {
+            sqlx::query(
+                "INSERT INTO logs (timestamp, log_type_id, rule_action_id, protocol_id,
+                                   src_ip, dst_ip, dst_port, threat_score)
+                 VALUES (NOW(), 1, $1, 1, '10.0.0.5', '1.2.3.4', 443, 60)",
+            ).bind(action).execute(&pool).await.unwrap();
+        }
+        // Ein anderes Paar, seltener — muss dahinter einsortiert werden.
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, rule_action_id, protocol_id,
+                               src_ip, dst_ip, dst_port)
+             VALUES (NOW(), 1, 1, 1, '10.0.0.9', '8.8.8.8', 53)",
+        ).execute(&pool).await.unwrap();
+        // Eine DNS-Zeile darf gar nicht auftauchen.
+        sqlx::query("INSERT INTO logs (timestamp, log_type_id, src_ip, dst_ip, dst_port) VALUES (NOW(), 2, '10.0.0.5', '1.1.1.1', 53)")
+            .execute(&pool).await.unwrap();
+
+        let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
+        let body = get_json(&app, "/api/stats/ip-pairs").await;
+        let pairs = body["pairs"].as_array().unwrap();
+        assert_eq!(pairs.len(), 2, "zwei Paare, die DNS-Zeile zählt nicht mit");
+
+        let first = &pairs[0];
+        assert_eq!(first["src_ip"].as_str(), Some("10.0.0.5"));
+        assert_eq!(first["dst_ip"].as_str(), Some("1.2.3.4"));
+        assert_eq!(first["dst_port"].as_i64(), Some(443));
+        assert_eq!(first["total"].as_i64(), Some(3));
+        assert_eq!(first["allowed"].as_i64(), Some(2));
+        assert_eq!(first["blocked"].as_i64(), Some(1));
+        assert_eq!(first["max_threat"].as_i64(), Some(60));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn ip_pairs_are_empty_not_null_without_data(pool: sqlx::PgPool) {
+        let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
+        let body = get_json(&app, "/api/stats/ip-pairs").await;
+        assert_eq!(body["pairs"].as_array().map(|a| a.len()), Some(0));
+    }
+
     #[sqlx::test(migrations = "../../migrations")]
     async fn empty_database_returns_zeros_and_empty_lists(pool: sqlx::PgPool) {
         let app = app(pool);
@@ -637,4 +684,59 @@ mod tests {
             .unwrap();
         assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
+}
+
+/// Verkehrspaare: dieselbe Quelle zum selben Ziel auf demselben Dienst,
+/// zusammengefasst und nach Menge sortiert.
+///
+/// Der Flow View zeigt, *wohin* Verkehr fließt; diese Liste zeigt, **wer mit
+/// wem** spricht — die Frage, die man beim Aufräumen von Firewall-Regeln
+/// tatsächlich stellt. Erlaubt und blockiert werden getrennt gezählt, damit
+/// ein Paar mit beidem als solches erkennbar bleibt.
+pub async fn get_ip_pairs(
+    State(pool): State<PgPool>,
+    Query(f): Query<LogFilter>,
+) -> Result<Json<Value>, ApiError> {
+    let limit: i64 = 25;
+    let mut qb = sqlx::QueryBuilder::new(
+        "SELECT host(l.src_ip) AS src_ip, host(l.dst_ip) AS dst_ip, l.dst_port,
+                lower(pr.name) AS protocol,
+                max(sv.name) AS service,
+                count(*)::bigint AS total,
+                count(*) FILTER (WHERE l.rule_action_id = 1)::bigint AS allowed,
+                count(*) FILTER (WHERE l.rule_action_id = 2)::bigint AS blocked,
+                max(l.threat_score) AS max_threat,
+                max(l.asn_name) AS asn_name
+         FROM logs l ",
+    );
+    f.push_joins(&mut qb);
+    qb.push(" LEFT JOIN services sv ON sv.port = l.dst_port AND sv.proto = lower(pr.name) ");
+    f.push_where(&mut qb);
+    qb.push(
+        " AND l.log_type_id = 1 AND l.src_ip IS NOT NULL AND l.dst_ip IS NOT NULL
+          AND l.dst_port IS NOT NULL
+          GROUP BY l.src_ip, l.dst_ip, l.dst_port, lower(pr.name)
+          ORDER BY count(*) DESC LIMIT ",
+    );
+    qb.push_bind(limit);
+
+    let rows = qb.build().fetch_all(&pool).await?;
+    let pairs: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "src_ip": r.get::<Option<String>, _>("src_ip"),
+                "dst_ip": r.get::<Option<String>, _>("dst_ip"),
+                "dst_port": r.get::<Option<i32>, _>("dst_port"),
+                "protocol": r.get::<Option<String>, _>("protocol"),
+                "service": r.get::<Option<String>, _>("service").as_deref().map(crate::services::display_name),
+                "total": r.get::<i64, _>("total"),
+                "allowed": r.get::<i64, _>("allowed"),
+                "blocked": r.get::<i64, _>("blocked"),
+                "max_threat": r.get::<Option<i32>, _>("max_threat"),
+                "asn_name": r.get::<Option<String>, _>("asn_name"),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "pairs": pairs })))
 }
