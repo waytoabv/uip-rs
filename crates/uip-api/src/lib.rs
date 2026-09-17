@@ -6,6 +6,7 @@ pub mod flows;
 pub mod hostdetail;
 pub mod filters;
 pub mod logs;
+pub mod networks;
 pub mod search;
 pub mod settings;
 pub mod status;
@@ -38,6 +39,7 @@ pub fn router(pool: PgPool, events: broadcast::Sender<Arc<LiveRow>>) -> Router {
     Router::new()
         .route("/api/health", get(|| async { "ok" }))
         .route("/api/status", get(status::get_status))
+        .route("/api/networks", get(networks::get_networks))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
         .route("/api/settings/pihole/test", get(settings::test_pihole))
         .route("/api/settings/unifi/test", get(settings::test_unifi))

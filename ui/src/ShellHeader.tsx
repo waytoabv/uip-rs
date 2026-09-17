@@ -191,15 +191,6 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
   return (
     <header class="flex items-center justify-between gap-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-4 py-2">
       <div class="flex min-w-0 flex-1 items-center gap-4 overflow-x-auto [&::-webkit-scrollbar]:hidden">
-        <div class="flex shrink-0 items-center gap-2">
-          <span
-            class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-[1.5px] border-teal-500 text-[11px] font-bold text-teal-400"
-            aria-hidden="true"
-          >
-            U
-          </span>
-          <span class="hidden text-sm font-semibold text-gray-800 dark:text-gray-200 sm:inline">UniFi Log Insight</span>
-        </div>
 
         <nav class="flex items-center gap-0.5">
           <For each={props.tabs}>

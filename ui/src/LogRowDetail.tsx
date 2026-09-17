@@ -3,6 +3,7 @@ import CountryFlag from './CountryFlag';
 import { countryName } from './country';
 import { decodeThreatCategories, normalizeRuleDesc, serviceName } from './LogHelpers';
 import { type LogEntry } from './LogsView';
+import { interfaceName } from './interfaceLabels';
 
 function Field(props: { label: string; children: unknown }) {
   return (
@@ -59,7 +60,7 @@ export default function LogRowDetail(props: { log: LogEntry }) {
         {normalizeRuleDesc(l().rule_desc) ?? l().rule_name ?? '—'}
       </Field>
       <Field label="Network">
-        IN: {l().iface_in ?? '—'} · OUT: {l().iface_out ?? '—'}
+        IN: {interfaceName(l().iface_in)} · OUT: {interfaceName(l().iface_out)}
         <Show when={l().mac_address}>
           <div class="text-[11px] text-gray-500">MAC: {l().mac_address}</div>
         </Show>

@@ -17,6 +17,7 @@ import {
   threatDotClass,
 } from './LogHelpers';
 import LogRowDetail from './LogRowDetail';
+import { namedNetworkPath } from './interfaceLabels';
 
 const PAGE_SIZE = 50;
 /** TIME, TYPE, ACTION, SOURCE, dir, DESTINATION, COUNTRY, ASN, NETWORK, PROTO, SERVICE, RULE/INFO, ABUSEIPDB, CATEGORIES */
@@ -648,8 +649,14 @@ export default function LogsView(props: { query: string }) {
                               <AsnCell name={row.asn_name} />
                             </td>
                           </Show>
-                          <td class="px-2 py-1.5 text-[12px] text-gray-600 dark:text-gray-300 whitespace-nowrap">
-                            {networkPath(row.iface_in, row.iface_out)}
+                          {/* Beschriftet, wo der Controller einen Namen kennt.
+                              Die rohen Kennungen bleiben im Tooltip — wer
+                              `br15` sucht, soll es finden. */}
+                          <td
+                            class="px-2 py-1.5 text-[12px] text-gray-600 dark:text-gray-300 whitespace-nowrap"
+                            title={networkPath(row.iface_in, row.iface_out)}
+                          >
+                            {namedNetworkPath(row.iface_in, row.iface_out)}
                           </td>
                           <Show when={showCol('proto')}>
                             <td class="px-2 py-1.5 text-[12px] text-gray-400 uppercase">{protocolName(row.protocol) ?? '—'}</td>

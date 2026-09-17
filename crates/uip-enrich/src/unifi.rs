@@ -103,6 +103,14 @@ impl Unifi {
         let clients = self.get("stat/sta").await?;
         let devices = self.get("stat/device").await?;
 
+        // Die Netz-Konfiguration ist die Nebensache, nicht der Zweck des
+        // Abgleichs: fehlt sie, bleiben die Schnittstellen eben bei ihren
+        // rohen Namen, statt dass der ganze Durchlauf scheitert.
+        match self.get("rest/networkconf").await {
+            Ok(networks) => store_networks(pool, &networks, &devices).await,
+            Err(e) => tracing::debug!(error = %e, "could not read the network configuration"),
+        }
+
         let mut n_clients = 0;
         for c in &clients {
             if store_client(pool, c).await {
@@ -116,6 +124,103 @@ impl Unifi {
             }
         }
         Ok((n_clients, n_devices))
+    }
+}
+
+/// Die Schnittstelle, auf der ein Netz im Log erscheint.
+///
+/// UniFi bildet VLAN *n* auf die Bridge `brn` ab; das Vorgabenetz ohne eigenes
+/// VLAN liegt auf `br0`. Dieselbe Regel wie im Vorgänger — sie steht nirgends
+/// in der API, sondern ergibt sich daraus, wie das Gateway die Bridges
+/// benennt.
+fn bridge_for(net: &Value) -> Option<String> {
+    let purpose = text(net, "purpose").unwrap_or_default();
+    if !matches!(purpose.as_str(), "corporate" | "guest" | "vlan-only") {
+        return None;
+    }
+    if !net.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true) {
+        return None;
+    }
+    let vlan_enabled = net.get("vlan_enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+    let vlan = net.get("vlan").and_then(|v| v.as_i64()).filter(|_| vlan_enabled).unwrap_or(1);
+    Some(if vlan == 1 { "br0".to_string() } else { format!("br{vlan}") })
+}
+
+/// Die WAN-Schnittstellen, wie das Gateway sie meldet.
+///
+/// Anders als bei den Bridges lässt sich der Name nicht aus der Netz-Definition
+/// ableiten — `eth4` oder `ppp0` steht nur am Gerät selbst. Die Zuordnung ist
+/// deshalb absichtlich zurückhaltend: findet sich nichts Passendes, bleibt es
+/// beim rohen Namen, statt einen zu erfinden.
+fn wan_interfaces(devices: &[Value], networks: &[Value]) -> Vec<(String, String)> {
+    let name_for = |group: &str| -> String {
+        networks
+            .iter()
+            .find(|n| {
+                text(n, "purpose").as_deref() == Some("wan")
+                    && text(n, "wan_networkgroup").as_deref() == Some(group)
+            })
+            .and_then(|n| text(n, "name"))
+            .unwrap_or_else(|| group.to_string())
+    };
+
+    let mut out = Vec::new();
+    for device in devices {
+        for (key, group) in [("wan1", "WAN"), ("wan2", "WAN2")] {
+            if let Some(iface) = device.get(key).and_then(|w| text(w, "ifname")) {
+                out.push((iface, name_for(group)));
+            }
+        }
+    }
+    out
+}
+
+async fn store_networks(pool: &PgPool, networks: &[Value], devices: &[Value]) {
+    let mut seen: Vec<String> = Vec::new();
+
+    for net in networks {
+        let (Some(iface), Some(name)) = (bridge_for(net), text(net, "name")) else {
+            continue;
+        };
+        let vlan = net.get("vlan").and_then(|v| v.as_i64()).map(|v| v as i32);
+        upsert_network(pool, &iface, &name, vlan, text(net, "purpose").as_deref()).await;
+        seen.push(iface);
+    }
+
+    for (iface, name) in wan_interfaces(devices, networks) {
+        upsert_network(pool, &iface, &name, None, Some("wan")).await;
+        seen.push(iface);
+    }
+
+    // Ein gelöschtes oder abgeschaltetes Netz soll seinen Namen verlieren,
+    // sonst trägt eine Schnittstelle für immer die Beschriftung von gestern.
+    if !seen.is_empty() {
+        let res = sqlx::query("DELETE FROM unifi_networks WHERE interface <> ALL($1)")
+            .bind(&seen)
+            .execute(pool)
+            .await;
+        if let Err(e) = res {
+            tracing::warn!(error = %e, "could not prune the network list");
+        }
+    }
+}
+
+async fn upsert_network(pool: &PgPool, iface: &str, name: &str, vlan: Option<i32>, purpose: Option<&str>) {
+    let res = sqlx::query(
+        "INSERT INTO unifi_networks (interface, name, vlan, purpose, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (interface) DO UPDATE SET
+            name = EXCLUDED.name, vlan = EXCLUDED.vlan,
+            purpose = EXCLUDED.purpose, updated_at = NOW()",
+    )
+    .bind(iface)
+    .bind(name)
+    .bind(vlan)
+    .bind(purpose)
+    .execute(pool)
+    .await;
+    if let Err(e) = res {
+        tracing::warn!(error = %e, iface, "could not store the network name");
     }
 }
 

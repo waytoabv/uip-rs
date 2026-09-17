@@ -7,6 +7,7 @@ import ShellHeader, { type NavTab } from './ShellHeader';
 import ShellSettings from './ShellSettings';
 import ThreatMap from './ThreatMap';
 import { describe, emptyFilters, toQuery, type FilterState } from './filters';
+import { loadInterfaceLabels } from './interfaceLabels';
 
 const THEME_KEY = 'uip-theme';
 
@@ -66,6 +67,13 @@ export default function App() {
   const applyFilter = (patch: Record<string, string>) => {
     setFilters((prev) => ({ ...prev, ...patch }));
   };
+
+  // Die Namen der Netze einmal holen. Sie gelten für jede Ansicht, also
+  // gehören sie hierher und nicht in die Tabelle, die sie zufällig zuerst
+  // braucht.
+  createEffect(() => {
+    void loadInterfaceLabels();
+  });
 
   // Setzt `data-theme` nur, wenn eine explizite Wahl getroffen wurde — sonst
   // bleibt das Attribut weg und `index.css` folgt der Systemeinstellung.
