@@ -239,10 +239,23 @@ async fn store_wan_addresses(pool: &PgPool, devices: &[Value]) {
             }
         }
     }
-    if found.is_empty() {
-        return;
+    if !found.is_empty() {
+        uip_core::settings::put_config(pool, "wan_ips_detected", found.join(",").into()).await;
     }
-    uip_core::settings::put_config(pool, "wan_ips_detected", found.join(",").into()).await;
+
+    // Und der Name der Schnittstelle. Ohne ihn hält der Parser jede
+    // Internetverbindung für Verkehr zwischen zwei VLANs: „WAN" ist keine
+    // Eigenschaft der Zeile, sondern die Frage, ob diese Schnittstelle zum
+    // Anbieter zeigt — und das weiß nur das Gerät.
+    let ifaces: Vec<String> = devices
+        .iter()
+        .flat_map(|d| ["wan1", "wan2"].map(|k| d.get(k).and_then(|w| text(w, "ifname"))))
+        .flatten()
+        .collect();
+    if !ifaces.is_empty() {
+        uip_core::settings::put_config(pool, "wan_interfaces_detected", ifaces.join(",").into())
+            .await;
+    }
 }
 
 async fn upsert_network(pool: &PgPool, iface: &str, name: &str, vlan: Option<i32>, purpose: Option<&str>) {

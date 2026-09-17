@@ -15,7 +15,7 @@ pub const VPN_PREFIXES: [&str; 9] =
 /// Dienst neu startet.
 #[derive(Debug, Clone, Default)]
 pub struct FirewallCtx {
-    pub wan_interfaces: HashSet<String>,
+    pub wan_interfaces: std::sync::Arc<arc_swap::ArcSwap<HashSet<String>>>,
     pub wan_ips: std::sync::Arc<arc_swap::ArcSwap<HashSet<IpAddr>>>,
 }
 
@@ -26,6 +26,17 @@ impl FirewallCtx {
             tracing::info!(count = ips.len(), "wan addresses changed");
             self.wan_ips.store(std::sync::Arc::new(ips));
         }
+    }
+
+    /// Nimmt einen neuen Satz WAN-Schnittstellen an. `true`, wenn er sich
+    /// geändert hat — dann stimmt die bisher abgeleitete Richtung nicht mehr.
+    pub fn set_wan_interfaces(&self, names: HashSet<String>) -> bool {
+        if **self.wan_interfaces.load() == names {
+            return false;
+        }
+        tracing::info!(?names, "wan interfaces changed");
+        self.wan_interfaces.store(std::sync::Arc::new(names));
+        true
     }
 }
 
@@ -84,14 +95,15 @@ fn derive_direction(
     if let Some(d) = dst_ip {
         if is_broadcast_or_multicast(d) { return Some(Direction::Local); }
     }
-    let wan_out = iface_out.map(|i| ctx.wan_interfaces.contains(i)).unwrap_or(false);
+    let wan = ctx.wan_interfaces.load();
+    let wan_out = iface_out.map(|i| wan.contains(i)).unwrap_or(false);
     if let Some(s) = src_ip {
         if ctx.wan_ips.load().contains(s) && !wan_out { return Some(Direction::Local); }
     }
     if let Some(r) = rule_name {
         if r.contains("DNAT") || r.contains("PREROUTING") { return Some(Direction::Nat); }
     }
-    let wan_in = iface_in.map(|i| ctx.wan_interfaces.contains(i)).unwrap_or(false);
+    let wan_in = iface_in.map(|i| wan.contains(i)).unwrap_or(false);
     let Some(out) = iface_out else {
         return Some(if wan_in { Direction::Inbound } else { Direction::Local });
     };
@@ -164,7 +176,9 @@ mod tests {
 
     fn ctx() -> FirewallCtx {
         FirewallCtx {
-            wan_interfaces: HashSet::from(["ppp0".to_string()]),
+            wan_interfaces: std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(
+                HashSet::from(["ppp0".to_string()]),
+            )),
             wan_ips: Default::default(),
         }
     }

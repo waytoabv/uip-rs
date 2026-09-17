@@ -226,7 +226,8 @@ mod tests {
         let wake = std::sync::Arc::new(tokio::sync::Notify::new());
         let writer = tokio::spawn(run_writer(rx, pool.clone(), cache, btx, wake));
 
-        let ctx = FirewallCtx { wan_interfaces: ["ppp0".to_string()].into_iter().collect(), wan_ips: Default::default() };
+        let ctx = FirewallCtx::default();
+        ctx.set_wan_interfaces(["ppp0".to_string()].into_iter().collect());
         let p = parse_log(
             "Feb  8 16:43:49 UDR kernel: [WAN_IN-D]IN=ppp0 OUT=br20 SRC=1.2.3.4 DST=10.0.0.5 PROTO=TCP SPT=1 DPT=443",
             Utc::now(), &ctx,

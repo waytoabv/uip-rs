@@ -36,7 +36,9 @@ async fn main() -> anyhow::Result<()> {
     let udp_sock = tokio::net::UdpSocket::bind(&cfg.syslog_addr).await?;
     tracing::info!(addr = %cfg.syslog_addr, "syslog listener up");
     let fw_ctx = FirewallCtx {
-        wan_interfaces: cfg.wan_interfaces.clone(),
+        wan_interfaces: std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(
+            cfg.wan_interfaces.clone(),
+        )),
         wan_ips: std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(settings.wan_ips.clone())),
     };
     // Der Empfänger zählt, was ankommt, und verwirft die Firewall-Zeilen über

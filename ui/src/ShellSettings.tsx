@@ -113,9 +113,12 @@ const SECTIONS: { title: string; note?: string; status?: string; fields: Field[]
   {
     title: 'Network',
     note:
-      'Your own WAN address, so it is never looked up as if it belonged to a stranger. Read from the ' +
-      'controller when UniFi is connected; fill this in only to override what it reports.',
+      'Which interface faces your provider, and under which address. Everything leaving through that ' +
+      'interface is outbound, everything arriving on it inbound — get it wrong and every internet ' +
+      'connection looks like traffic between two VLANs. Read from the controller when UniFi is ' +
+      'connected; fill these in only to override what it reports.',
     fields: [
+      { key: 'wan_interfaces', label: 'WAN interfaces', kind: 'text', hint: 'optional override, e.g. eth1, ppp0' },
       { key: 'wan_ips', label: 'WAN addresses', kind: 'text', hint: 'optional override, comma separated' },
     ],
   },
@@ -212,10 +215,14 @@ export default function ShellSettings(props: { onClose: () => void }) {
 
   const isSecretSet = (key: string) => data()[`${key}_set`] === true;
 
-  /** Die vom Controller gemeldete WAN-Adresse, falls es eine gibt. */
-  const detectedWan = () => {
-    const v = data()['wan_ips_detected'];
-    return typeof v === 'string' && v !== '' ? v : null;
+  /** Was der Controller über das WAN gemeldet hat, falls etwas. */
+  const detected = () => {
+    const text = (key: string) => {
+      const v = data()[key];
+      return typeof v === 'string' && v !== '' ? v : null;
+    };
+    const parts = [text('wan_interfaces_detected'), text('wan_ips_detected')].filter(Boolean);
+    return parts.length ? parts.join(' · ') : null;
   };
 
   const save = async () => {
@@ -329,9 +336,9 @@ export default function ShellSettings(props: { onClose: () => void }) {
                 </Show>
                 {/* Was der Controller gemeldet hat, statt einer Zeile, die
                     jemand von Hand pflegen müsste. */}
-                <Show when={section.title === 'Network' && detectedWan()}>
+                <Show when={section.title === 'Network' && detected()}>
                   <p class="mt-1 text-[11px] text-gray-600 dark:text-gray-400">
-                    Reported by the controller: <span class="font-medium">{detectedWan()}</span>
+                    Reported by the controller: <span class="font-medium">{detected()}</span>
                   </p>
                 </Show>
                 <div class="mt-2 space-y-2">

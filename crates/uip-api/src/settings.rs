@@ -18,6 +18,7 @@ use crate::error::ApiError;
 /// Schlüssel wäre dort eine stumme Fehlfunktion statt eines Fehlers.
 const ALLOWED: &[(&str, Kind)] = &[
     ("wan_ips", Kind::Text),
+    ("wan_interfaces", Kind::Text),
     ("rdns_enabled", Kind::Bool),
     ("drop_syslog_traffic", Kind::Bool),
     ("abuseipdb_api_key", Kind::Secret),
@@ -39,7 +40,7 @@ const ALLOWED: &[(&str, Kind)] = &[
 /// stammen aus dem Betrieb, nicht aus einer Eingabe. Sie stehen bewusst nicht
 /// in `ALLOWED` — dort hinein bedeutete „darf gesetzt werden", und eine von
 /// Hand gesetzte „erkannte" Adresse wäre ein Widerspruch in sich.
-const READ_ONLY: &[&str] = &["wan_ips_detected"];
+const READ_ONLY: &[&str] = &["wan_ips_detected", "wan_interfaces_detected"];
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
