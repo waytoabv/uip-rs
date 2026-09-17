@@ -15,6 +15,9 @@ use uip_core::types::LogType;
 use uip_core::ParsedLog;
 
 const POLL_EVERY: Duration = Duration::from_secs(30);
+/// Solange Pi-hole aus oder unvollständig eingerichtet ist, wird nur
+/// nachgesehen, ob sich daran etwas geändert hat.
+const UNCONFIGURED_POLL: Duration = Duration::from_secs(60);
 /// Wie viele Abfragen ein Abruf höchstens holt.
 const FETCH_LIMIT: u32 = 5000;
 
@@ -206,13 +209,51 @@ async fn record(pool: &PgPool, ok: bool, error: Option<String>) {
     .await;
 }
 
-pub async fn run_pihole(client: Pihole, tx: mpsc::Sender<ParsedLog>, pool: PgPool) {
+/// Adresse und Passwort, wie sie gerade eingestellt sind — oder nichts,
+/// solange Pi-hole abgeschaltet oder unvollständig eingerichtet ist.
+async fn config(pool: &PgPool) -> Option<(String, String)> {
+    let enabled = uip_core::settings::get_config(pool, "pihole_enabled")
+        .await
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !enabled {
+        return None;
+    }
+    let text = |v: Option<serde_json::Value>| {
+        v.and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty())
+    };
+    let url = text(uip_core::settings::get_config(pool, "pihole_url").await)?;
+    let password = text(uip_core::settings::get_config(pool, "pihole_password").await)
+        .unwrap_or_default();
+    Some((url, password))
+}
+
+pub async fn run_pihole(tx: mpsc::Sender<ParsedLog>, pool: PgPool) {
     // Beim ersten Lauf nur die letzten fünf Minuten — sonst spült ein frisch
     // eingerichtetes Pi-hole seine gesamte Historie in die Datenbank.
     let mut since = Utc::now().timestamp() - 300;
     let mut cursor: i64 = 0;
+    // Der aktive Client samt der Einstellung, aus der er gebaut wurde. Nicht
+    // bei jedem Durchlauf neu: der Client hält eine Sitzung, und die jedes Mal
+    // wegzuwerfen hieße, sich alle dreißig Sekunden neu anzumelden.
+    let mut current: Option<((String, String), Pihole)> = None;
 
     loop {
+        let Some(cfg) = config(&pool).await else {
+            current = None;
+            tokio::time::sleep(UNCONFIGURED_POLL).await;
+            continue;
+        };
+        if current.as_ref().map(|(c, _)| c) != Some(&cfg) {
+            tracing::info!(url = %cfg.0, "pihole settings changed");
+            current = Some((cfg.clone(), Pihole::new(cfg.0.clone(), cfg.1.clone())));
+            // Die Kennungen gehören der alten Instanz; an einem anderen
+            // Pi-hole bedeuten sie etwas anderes.
+            cursor = 0;
+            since = Utc::now().timestamp() - 300;
+        }
+        let client = &current.as_ref().expect("gerade gesetzt").1;
+
         match client.fetch(since, cursor).await {
             Ok((rows, highest)) => {
                 let n = rows.len();

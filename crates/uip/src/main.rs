@@ -56,62 +56,46 @@ async fn main() -> anyhow::Result<()> {
     // nachgetragener Schlüssel erst nach einem Neustart etwas bewirkt.
     tokio::spawn(uip_enrich::maxmind::run_updater(pool.clone(), geo.clone()));
 
-    let rdns: Option<Arc<dyn uip_enrich::RdnsSource>> = if settings.rdns_enabled {
-        match uip_enrich::rdns::Rdns::from_system() {
-            Ok(r) => Some(Arc::new(r)),
-            Err(e) => {
-                tracing::warn!(error = %e, "no system resolver, reverse dns stays off");
-                None
-            }
+    // Der Auflöser wird immer gebaut, wenn das System einen hergibt; ob er
+    // benutzt wird, entscheidet ein Schalter, den der Worker laufend nachliest.
+    // Ihn hier wegzulassen hieße, dass das Wiedereinschalten einen Neustart
+    // braucht.
+    let rdns: Option<Arc<dyn uip_enrich::RdnsSource>> = match uip_enrich::rdns::Rdns::from_system()
+    {
+        Ok(r) => Some(Arc::new(r)),
+        Err(e) => {
+            tracing::warn!(error = %e, "no system resolver, reverse dns stays off");
+            None
         }
-    } else {
-        None
     };
+    let rdns_enabled = Arc::new(std::sync::atomic::AtomicBool::new(settings.rdns_enabled));
 
-    let threat: Arc<dyn uip_enrich::ThreatSource> = match &settings.abuseipdb_key {
-        Some(key) => Arc::new(uip_enrich::abuseipdb::AbuseIpDb::new(key.clone())),
-        None => Arc::new(uip_enrich::abuseipdb::NoThreatSource),
-    };
+    // Auch ohne Schlüssel: die Quelle meldet sich dann als abgeschaltet und
+    // nimmt einen später eingetragenen Schlüssel an. `NoThreatSource` könnte
+    // das nicht — aus ihr wird nie eine AbuseIPDB-Quelle.
+    let threat: Arc<dyn uip_enrich::ThreatSource> = Arc::new(
+        uip_enrich::abuseipdb::AbuseIpDb::new(settings.abuseipdb_key.clone().unwrap_or_default()),
+    );
 
     tokio::spawn(uip_enrich::run_worker(
         pool.clone(),
-        uip_enrich::Sources { geo, rdns, threat },
+        uip_enrich::Sources { geo, rdns, threat, rdns_enabled },
         uip_enrich::Exclusions(settings.exclusions()),
         wake_enricher,
     ));
 
     // Pi-hole liefert DNS-Abfragen, die am Gateway-Syslog vorbeilaufen. Die
     // Zeilen gehen in denselben Writer — dahinter ist es gewöhnliches DNS.
-    if settings.pihole_enabled {
-        match (&settings.pihole_url, &settings.pihole_password) {
-            (Some(url), password) if !url.is_empty() => {
-                let client = uip_enrich::pihole::Pihole::new(
-                    url.clone(),
-                    password.clone().unwrap_or_default(),
-                );
-                tracing::info!(url = %url, "pihole polling enabled");
-                tokio::spawn(uip_enrich::pihole::run_pihole(client, pihole_tx, pool.clone()));
-            }
-            _ => tracing::warn!("pihole enabled but no url configured"),
-        }
-    }
+    //
+    // Beide Aufgaben starten bedingungslos und lesen ihre Einstellungen selbst
+    // nach. Sie hier von `settings` abhängig zu machen hieße, dass ein im
+    // Dialog eingerichteter Dienst bis zum nächsten Neustart stillsteht — und
+    // ein abgeschalteter bis dahin weiterläuft.
+    tokio::spawn(uip_enrich::pihole::run_pihole(pihole_tx, pool.clone()));
 
     // Gerätenamen aus dem Controller. Aufgelöst wird beim Lesen, hier wird
     // nur der Bestand aktuell gehalten.
-    if settings.unifi_enabled {
-        match &settings.unifi_url {
-            Some(url) if !url.is_empty() => {
-                let client = uip_enrich::unifi::Unifi::new(
-                    url.clone(),
-                    settings.unifi_api_key.clone().unwrap_or_default(),
-                    settings.unifi_site.clone().unwrap_or_default(),
-                );
-                tracing::info!(url = %url, "unifi inventory sync enabled");
-                tokio::spawn(uip_enrich::unifi::run_unifi(client, pool.clone()));
-            }
-            _ => tracing::warn!("unifi enabled but no url configured"),
-        }
-    }
+    tokio::spawn(uip_enrich::unifi::run_unifi(pool.clone()));
 
     let app = uip_api::router(pool, event_tx);
     let listener = tokio::net::TcpListener::bind(&cfg.http_addr).await?;

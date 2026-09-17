@@ -17,6 +17,12 @@ pub struct Sources {
     pub geo: Arc<dyn GeoSource>,
     pub rdns: Option<Arc<dyn RdnsSource>>,
     pub threat: Arc<dyn ThreatSource>,
+    /// Ob rückwärtige Namensauflösung gerade erwünscht ist.
+    ///
+    /// Ein Schalter statt eines `Option`, weil der Auflöser beim Start gebaut
+    /// wird, die Einstellung aber jederzeit umgelegt werden kann — ohne ihn
+    /// hieße Abschalten, dass das Wiedereinschalten einen Neustart braucht.
+    pub rdns_enabled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Adressen, die uns selbst gehören und die niemand nachschlagen muss.
@@ -211,7 +217,7 @@ pub async fn run_once(
         if known.geo_country.is_none() && known.asn_number.is_none() {
             known.merge(sources.geo.lookup(*ip));
         }
-        if known.rdns.is_none() {
+        if known.rdns.is_none() && sources.rdns_enabled.load(std::sync::atomic::Ordering::Relaxed) {
             if let Some(rdns) = &sources.rdns {
                 known.rdns = rdns.lookup(*ip).await;
             }
@@ -340,6 +346,27 @@ async fn write_back(
 
 /// Dauerläufer: arbeitet die Queue leer, wartet dann auf ein Signal vom
 /// Writer oder auf den Timer.
+/// Übernimmt, was im Einstellungs-Dialog steht — bei jedem Durchlauf.
+///
+/// Zwei Werte betreffen die Anreicherung unmittelbar: der AbuseIPDB-Schlüssel
+/// und der Schalter für die rückwärtige Namensauflösung. Beide sind billig zu
+/// lesen, und die Alternative wäre, den Dienst neu starten zu lassen.
+async fn apply_settings(pool: &PgPool, sources: &Sources) {
+    let text = |v: Option<serde_json::Value>| {
+        v.and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+    };
+    sources
+        .threat
+        .set_api_key(&text(uip_core::settings::get_config(pool, "abuseipdb_api_key").await));
+
+    // Fehlt der Eintrag, gilt dieselbe Vorgabe wie in `uip_core::Settings`.
+    let enabled = uip_core::settings::get_config(pool, "rdns_enabled")
+        .await
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    sources.rdns_enabled.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Hält den Kontingentstand dort fest, wo die API ihn findet.
 ///
 /// `system_config` ist der Kanal, den Ingest, Anreicherung und API sich ohnehin
@@ -384,6 +411,10 @@ pub async fn run_worker(
     // Schreibvorgang je Durchlauf für eine Zahl, die sich selten bewegt.
     let mut last_quota: Option<Quota> = None;
     loop {
+        // Die Einstellungen können sich jederzeit ändern; sie nur beim Start zu
+        // lesen hieße, dass ein im Dialog eingetragener Schlüssel erst nach
+        // einem Neustart wirkt.
+        apply_settings(&pool, &sources).await;
         if let Some(q) = sources.threat.quota() {
             if last_quota != Some(q) {
                 persist_quota(&pool, q).await;
@@ -440,6 +471,7 @@ mod tests {
             geo: geo.clone(),
             rdns: Some(Arc::new(FakeRdns)),
             threat: Arc::new(FakeThreat { outcome: threat }),
+            rdns_enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
         (geo, s)
     }
@@ -492,6 +524,32 @@ mod tests {
         let n = run_once(&pool, &s, &Default::default(), 100).await.unwrap();
         assert_eq!(n, 6);
         assert_eq!(geo.calls.load(Ordering::SeqCst), 2, "zwei verschiedene Adressen, zwei Lookups");
+    }
+
+    /// Der Punkt der ganzen Übung: was im Einstellungs-Dialog steht, wirkt im
+    /// laufenden Dienst. Vorher wurden diese Werte einmal beim Start gelesen,
+    /// und eine Änderung blieb bis zum Neustart folgenlos.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn settings_reach_the_running_worker(pool: sqlx::PgPool) {
+        let (_geo, sources) = sources(ThreatOutcome::NotFound);
+        let threat = Arc::new(crate::abuseipdb::AbuseIpDb::new(String::new()));
+        let sources = Sources { threat: threat.clone(), ..sources };
+
+        assert!(!threat.enabled(), "ohne Eintrag abgeschaltet");
+        uip_core::settings::put_config(&pool, "abuseipdb_api_key", "secret".into()).await;
+        uip_core::settings::put_config(&pool, "rdns_enabled", false.into()).await;
+
+        apply_settings(&pool, &sources).await;
+
+        assert!(threat.enabled(), "der Schlüssel kam im Betrieb an");
+        assert!(!sources.rdns_enabled.load(std::sync::atomic::Ordering::Relaxed));
+
+        // Und wieder zurück, ohne Neustart.
+        uip_core::settings::put_config(&pool, "abuseipdb_api_key", "".into()).await;
+        uip_core::settings::put_config(&pool, "rdns_enabled", true.into()).await;
+        apply_settings(&pool, &sources).await;
+        assert!(!threat.enabled());
+        assert!(sources.rdns_enabled.load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -573,6 +631,7 @@ mod tests {
             geo,
             rdns: Some(Arc::new(FakeRdns)),
             threat: Arc::new(MultiThreat),
+            rdns_enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
 
         let n = run_once(&pool, &s, &Default::default(), 100).await.unwrap();

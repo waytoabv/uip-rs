@@ -77,6 +77,12 @@ pub struct Quota {
 pub trait ThreatSource: Send + Sync {
     async fn lookup(&self, ip: IpAddr) -> ThreatOutcome;
 
+    /// Nimmt einen neuen Schlüssel an, ohne dass der Dienst neu startet.
+    ///
+    /// Ein leerer Schlüssel schaltet die Quelle ab. Standardmäßig folgenlos:
+    /// Quellen ohne Zugangsdaten haben nichts zu wechseln.
+    fn set_api_key(&self, _key: &str) {}
+
     /// Der Stand des Kontingents, falls die Quelle eines führt.
     ///
     /// `None` heißt „unbekannt" — vor der ersten Antwort, oder weil die Quelle

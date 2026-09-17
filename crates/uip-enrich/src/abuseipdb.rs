@@ -18,7 +18,9 @@ fn next_utc_midnight() -> i64 {
 const MAX_AGE_DAYS: &str = "90";
 
 pub struct AbuseIpDb {
-    api_key: String,
+    /// Austauschbar, weil er aus den Einstellungen kommt und dort jederzeit
+    /// geändert werden kann.
+    api_key: arc_swap::ArcSwap<String>,
     url: String,
     http: reqwest::Client,
     /// Verbleibendes Kontingent laut letztem Antwort-Header. -1 = unbekannt.
@@ -38,7 +40,7 @@ impl AbuseIpDb {
 
     pub fn with_url(api_key: String, url: String) -> Self {
         Self {
-            api_key,
+            api_key: arc_swap::ArcSwap::from_pointee(api_key),
             url,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
@@ -52,7 +54,7 @@ impl AbuseIpDb {
     }
 
     pub fn enabled(&self) -> bool {
-        !self.api_key.is_empty()
+        !self.api_key.load().is_empty()
     }
 
     fn paused(&self) -> bool {
@@ -84,6 +86,21 @@ impl AbuseIpDb {
 
 #[async_trait::async_trait]
 impl ThreatSource for AbuseIpDb {
+    fn set_api_key(&self, key: &str) {
+        if self.api_key.load().as_str() == key {
+            return;
+        }
+        self.api_key.store(std::sync::Arc::new(key.to_string()));
+        // Ein anderer Schlüssel ist ein anderes Kontingent. Die Zähler des
+        // alten weiterzuführen hieße, mit fremden Zahlen zu rechnen — und ein
+        // geerbtes `remaining: 0` sperrte den neuen Schlüssel sofort.
+        self.remaining.store(-1, Ordering::Relaxed);
+        self.limit.store(-1, Ordering::Relaxed);
+        self.reset_at.store(0, Ordering::Relaxed);
+        self.paused_until.store(0, Ordering::Relaxed);
+        tracing::info!(enabled = !key.is_empty(), "abuseipdb key changed");
+    }
+
     fn quota(&self) -> Option<Quota> {
         // -1 ist der Anfangswert: es gab noch keine Antwort, aus der ein
         // Kontingent hervorginge. Ohne Schlüssel fragen wir nie, also auch
@@ -113,7 +130,7 @@ impl ThreatSource for AbuseIpDb {
         let res = self
             .http
             .get(&self.url)
-            .header("Key", &self.api_key)
+            .header("Key", self.api_key.load().as_str())
             .header("Accept", "application/json")
             .query(&[
                 ("ipAddress", ip.to_string().as_str()),
@@ -353,6 +370,36 @@ mod tests {
             .and_utc()
             .timestamp();
         assert_eq!(reset, midnight, "die naechste Mitternacht UTC");
+    }
+
+    /// Ein im Dialog gewechselter Schlüssel ist ein anderes Kontingent. Die
+    /// Zähler des alten weiterzuführen hieße, einen frischen Schlüssel sofort
+    /// mit einem geerbten `remaining: 0` zu sperren.
+    #[tokio::test]
+    async fn a_new_key_starts_with_a_fresh_quota() {
+        let (url, hits) = stub(200, "0").await;
+        let c = AbuseIpDb::with_url("old".into(), url);
+        c.lookup("8.8.8.8".parse().unwrap()).await;
+        assert_eq!(c.quota().map(|q| q.remaining), Some(0));
+
+        c.set_api_key("new");
+        assert!(c.quota().is_none(), "unbekannt, nicht null");
+
+        // Und der nächste Aufruf geht auch wirklich wieder raus.
+        c.lookup("1.1.1.1".parse().unwrap()).await;
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+
+    /// Ein geleerter Schlüssel schaltet die Quelle ab, ohne Neustart.
+    #[tokio::test]
+    async fn an_emptied_key_switches_the_source_off() {
+        let (url, hits) = stub(200, "900").await;
+        let c = AbuseIpDb::with_url("key".into(), url);
+        assert!(matches!(c.lookup("8.8.8.8".parse().unwrap()).await, ThreatOutcome::Found(_)));
+
+        c.set_api_key("");
+        assert_eq!(c.lookup("1.1.1.1".parse().unwrap()).await, ThreatOutcome::Disabled);
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "abgeschaltet fragt nicht");
     }
 
     #[tokio::test]

@@ -15,6 +15,9 @@ use sqlx::PgPool;
 use std::time::Duration;
 
 const SYNC_EVERY: Duration = Duration::from_secs(300);
+/// Solange der Controller aus oder unvollständig eingerichtet ist, wird nur
+/// nachgesehen, ob sich daran etwas geändert hat.
+const UNCONFIGURED_POLL: Duration = Duration::from_secs(60);
 
 pub struct Unifi {
     base: String,
@@ -174,8 +177,39 @@ async fn store_device(pool: &PgPool, d: &Value) -> bool {
 
 /// Dauerläufer: alle fünf Minuten abgleichen. Gerätenamen ändern sich selten,
 /// und ein Controller ist kein Dienst, den man im Sekundentakt befragen sollte.
-pub async fn run_unifi(client: Unifi, pool: PgPool) {
+/// Controller, Schlüssel und Standort, wie sie gerade eingestellt sind.
+async fn config(pool: &PgPool) -> Option<(String, String, String)> {
+    let enabled = uip_core::settings::get_config(pool, "unifi_enabled")
+        .await
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !enabled {
+        return None;
+    }
+    let text = |v: Option<serde_json::Value>| {
+        v.and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty())
+    };
+    let url = text(uip_core::settings::get_config(pool, "unifi_url").await)?;
+    let key = text(uip_core::settings::get_config(pool, "unifi_api_key").await).unwrap_or_default();
+    let site = text(uip_core::settings::get_config(pool, "unifi_site").await).unwrap_or_default();
+    Some((url, key, site))
+}
+
+pub async fn run_unifi(pool: PgPool) {
+    let mut current: Option<((String, String, String), Unifi)> = None;
+
     loop {
+        let Some(cfg) = config(&pool).await else {
+            current = None;
+            tokio::time::sleep(UNCONFIGURED_POLL).await;
+            continue;
+        };
+        if current.as_ref().map(|(c, _)| c) != Some(&cfg) {
+            tracing::info!(url = %cfg.0, "unifi settings changed");
+            current = Some((cfg.clone(), Unifi::new(cfg.0.clone(), cfg.1.clone(), cfg.2.clone())));
+        }
+        let client = &current.as_ref().expect("gerade gesetzt").1;
+
         match client.sync(&pool).await {
             Ok((c, d)) => tracing::info!(clients = c, devices = d, "synced unifi inventory"),
             Err(e) => tracing::warn!(error = %e, "unifi sync failed"),
