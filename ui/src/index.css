@@ -286,13 +286,28 @@ tbody tr:hover {
   color: #6b4708;
 }
 
-/* Inhalt bestimmt die Spaltenbreite, also darf nichts umbrechen — eine
-   umgebrochene Zelle machte die Spalte schmal und die Zeile hoch, statt die
-   Tabelle breit. Was dann nicht mehr ins Fenster passt, scrollt seitwärts.
+/* Die Spaltenbreite steht nach dem Messen fest, also muss der Inhalt sich ihr
+   fügen: nicht umbrechen (das machte die Spalte schmal und die Zeile hoch) und
+   an der Kante enden statt in die Nachbarspalte zu ragen. Gekappt wird damit
+   dort, wo die Spalte aufhört — und nicht an einer Maximalbreite tief in der
+   Zelle, die den Text auch dann abschneidet, wenn daneben Platz wäre.
 
    Nur Kopf- und Datenzeilen: die aufgeklappte Detailzeile spannt über alle
    Spalten und soll umbrechen dürfen. */
 .log-table th,
 .log-table tr.log-row > td {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Jede Zeile gleich hoch: beide Textzeilen einer Zelle bekommen dieselbe
+   Zeilenhöhe, damit die Zeitspalte und die Adressspalte auf denselben Wert
+   kommen. Ohne das entschied die Schriftgröße der jeweiligen Zelle, und eine
+   Zeile mit aufgelöstem Namen wurde höher als eine ohne. */
+.log-table tr.log-row > td {
+  height: 44px;
+}
+.log-table tr.log-row > td > div {
+  line-height: 1.35;
 }

@@ -183,30 +183,35 @@ function ActionPill(props: { action: string | null; dhcpEvent: string | null; wi
   );
 }
 
+/**
+ * Adresse und Port, immer zweizeilig.
+ *
+ * Die Zeitspalte ist ohnehin zweizeilig (Uhrzeit über Datum) — die Höhe der
+ * Zeile steht damit fest, und eine Adresszelle, die mal ein- und mal
+ * zweizeilig ist, macht daraus einen Sprung bei jeder eintreffenden Zeile.
+ * Also immer zwei: oben der Name, wenn es einen gibt, sonst die Adresse;
+ * unten, was davon noch fehlt.
+ *
+ * Keine eigene Maximalbreite: gekappt wird an der Spaltenkante (siehe
+ * `.log-table` in index.css). Ein `max-w` hier schnitte den Text ab, obwohl
+ * die Spalte breiter ist — und legte die Spaltenbreite gleich mit fest.
+ */
 function AddressCell(props: { ip: string | null; port: number | null; name: string | null }) {
+  const primary = () => props.name ?? props.ip;
+  const detail = () => (props.name ? props.ip : null);
   return (
     <Show when={props.ip} fallback={<span class="text-gray-300 dark:text-gray-700">—</span>}>
-      <Show
-        when={props.name}
-        fallback={
-          <span class="text-[13px] text-gray-600 dark:text-gray-300 whitespace-nowrap">
-            {props.ip}
-            <Show when={props.port != null}>
-              <span class="text-gray-500">:{props.port}</span>
-            </Show>
-          </span>
-        }
-      >
-        <div class="leading-tight min-w-0">
-          <div class="text-[12px] text-gray-700 dark:text-gray-200 truncate max-w-[160px]" title={props.name ?? undefined}>
-            {props.name}
-          </div>
-          <div class="text-[11px] text-gray-500 truncate max-w-[160px]">
-            {props.ip}
-            <Show when={props.port != null}>:{props.port}</Show>
-          </div>
+      <div class="leading-tight">
+        <div class="truncate text-[13px] text-gray-700 dark:text-gray-200" title={primary() ?? undefined}>
+          {primary()}
         </div>
-      </Show>
+        <div class="truncate text-[11px] text-gray-500">
+          {detail()}
+          <Show when={props.port != null}>
+            <span class="text-gray-500">:{props.port}</span>
+          </Show>
+        </div>
+      </div>
     </Show>
   );
 }
@@ -225,7 +230,7 @@ function AsnCell(props: { name: string | null }) {
   return (
     <Show when={props.name} fallback={<span class="text-gray-300 dark:text-gray-700">—</span>}>
       <span
-        class="text-[12px] text-gray-500 whitespace-nowrap truncate max-w-[480px] inline-block align-bottom"
+        class="text-[12px] text-gray-500 whitespace-nowrap truncate inline-block align-bottom max-w-full"
         title={props.name ?? undefined}
       >
         {props.name}
@@ -250,7 +255,7 @@ function CategoriesCell(props: { categories: string[] | null }) {
   return (
     <Show when={text()} fallback={<span class="text-gray-300 dark:text-gray-700">—</span>}>
       <span
-        class="text-[11px] text-purple-600/70 dark:text-purple-400/70 truncate max-w-[480px] inline-block align-bottom"
+        class="text-[11px] text-purple-600/70 dark:text-purple-400/70 truncate inline-block align-bottom max-w-full"
         title={text() ?? undefined}
       >
         {text()}
@@ -276,6 +281,21 @@ function storedWidths(): Record<string, number> {
 const [columnWidths, setColumnWidths] = createSignal<Record<string, number>>(storedWidths());
 
 /**
+ * Die einmal gemessenen Spaltenbreiten der geladenen Seite.
+ *
+ * Inhaltsbreite ohne Messung hieße: jede eintreffende Zeile, die irgendwo
+ * länger ist, legt die ganze Tabelle neu aus — das sichtbare Springen. Also
+ * einmal messen, wenn eine Seite geladen ist, und die Breiten danach halten;
+ * was später länger ist, wird gekürzt statt die Tabelle umzubauen. Neu
+ * gemessen wird, wenn sich die Daten ändern: Filter, Seite, Refresh.
+ */
+const [measured, setMeasured] = createSignal<Record<string, number>>({});
+
+/** Schmaler als das ist unlesbar, breiter verdrängt alles andere. */
+const MIN_COLUMN = 48;
+const MAX_COLUMN = 360;
+
+/**
  * Eine Kopfzelle, so breit wie ihr Inhalt — und von Hand verstellbar.
  *
  * Ohne gesetzte Breite bestimmt der Inhalt die Spalte (`table-auto` plus
@@ -286,7 +306,8 @@ const [columnWidths, setColumnWidths] = createSignal<Record<string, number>>(sto
  * ab dann gilt die, und sie bleibt über `localStorage` erhalten.
  */
 function Th(props: { key: string; label: string; center?: boolean }) {
-  const width = () => columnWidths()[props.key];
+  // Von Hand gezogen schlägt gemessen: wer zieht, meint es.
+  const width = () => columnWidths()[props.key] ?? measured()[props.key];
 
   const startDrag = (e: MouseEvent) => {
     e.preventDefault();
@@ -316,8 +337,9 @@ function Th(props: { key: string; label: string; center?: boolean }) {
 
   return (
     <th
+      data-col={props.key}
       style={width() == null ? undefined : { width: `${width()}px` }}
-      class={`relative whitespace-nowrap px-2 py-2 text-[12px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 ${
+      class={`relative whitespace-nowrap px-3 py-2 text-[12px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 ${
         props.center ? 'text-center' : ''
       }`}
     >
@@ -358,6 +380,34 @@ export default function LogsView(props: { query: string }) {
   const showCol = (key: string) => !hiddenColumns().has(key);
   const visibleColumnCount = () => COLUMN_COUNT - hiddenColumns().size;
 
+  let tableRef: HTMLTableElement | undefined;
+
+  /**
+   * Misst die Spalten der gerade geladenen Seite und hält sie fest.
+   *
+   * Läuft im Bild nach dem Zeichnen: vorher steht die Tabelle auf
+   * Inhaltsbreite, danach auf genau diesen Werten. Der eine Zwischenschritt
+   * ist derselbe Inhalt in derselben Breite — zu sehen ist er nicht.
+   */
+  const measureColumns = () => {
+    if (!tableRef) return;
+    const next: Record<string, number> = {};
+    for (const th of tableRef.querySelectorAll<HTMLElement>('thead th[data-col]')) {
+      const key = th.dataset.col;
+      if (!key) continue;
+      const w = Math.round(th.getBoundingClientRect().width);
+      if (w > 0) next[key] = Math.min(MAX_COLUMN, Math.max(MIN_COLUMN, w));
+    }
+    if (Object.keys(next).length) setMeasured(next);
+  };
+
+  // Neue Daten heißen neue Breiten. Erst verwerfen — dann legt der Browser die
+  // Tabelle wieder nach Inhalt aus — und im nächsten Bild messen.
+  const remeasure = () => {
+    setMeasured({});
+    requestAnimationFrame(() => requestAnimationFrame(measureColumns));
+  };
+
   function toggleColumn(key: string) {
     setHiddenColumns((prev) => {
       const next = new Set(prev);
@@ -370,6 +420,8 @@ export default function LogsView(props: { query: string }) {
       }
       return next;
     });
+    // Eine Spalte weniger heißt mehr Platz für die übrigen.
+    remeasure();
   }
 
   // Schließt das Columns-Menü bei einem Klick außerhalb.
@@ -399,6 +451,7 @@ export default function LogsView(props: { query: string }) {
         setRows(body.rows);
         setNextCursor(body.next_cursor);
         setLastUpdate(new Date());
+        remeasure();
       })
       .catch(() => {
         setRows([]);
@@ -564,14 +617,22 @@ export default function LogsView(props: { query: string }) {
             es verlangt, und der Behälter darüber scrollt seitwärts. Mit
             `w-full` staucht der Browser stattdessen alle Spalten auf die
             Fensterbreite zusammen. */}
-        <table class="log-table w-max text-left border-collapse">
+        {/* `table-fixed`, sobald gemessen wurde: dann gelten die Breiten und
+            eine längere Live-Zeile kürzt sich ein, statt die Tabelle
+            umzubauen. Davor `auto`, damit überhaupt etwas zu messen ist. */}
+        <table
+          ref={tableRef}
+          class={`log-table w-max text-left border-collapse ${
+            Object.keys(measured()).length ? 'table-fixed' : ''
+          }`}
+        >
           <thead class="sticky top-0 z-10 bg-gray-100 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
             <tr>
               <Th key="time" label="Time" />
               <Th key="type" label="Type" />
               <Th key="action" label="Action" />
               <Th key="source" label="Source" />
-              <th class="px-1 py-2"></th>
+              <th class="px-3 py-2" data-col="direction"></th>
               <Th key="destination" label="Destination" />
               <Show when={showCol('country')}>
                 <Th key="country" label="Country" center />
@@ -628,7 +689,7 @@ export default function LogsView(props: { query: string }) {
                             expanded() ? '' : 'border-b border-gray-200/50 dark:border-gray-800/50'
                           } ${tint ? 'bg-red-100/60 dark:bg-red-950/10' : ''}`}
                         >
-                          <td class="px-3 py-1.5 whitespace-nowrap" title={row.timestamp}>
+                          <td class="px-3 py-1.5" title={row.timestamp}>
                             <div class="text-[13px] font-light text-gray-500 dark:text-gray-400">
                               {formatClock(row.timestamp)}
                             </div>
@@ -636,31 +697,31 @@ export default function LogsView(props: { query: string }) {
                               {formatDateShort(row.timestamp)}
                             </div>
                           </td>
-                          <td class="px-2 py-1.5">
+                          <td class="px-3 py-1.5">
                             <TypePill type={row.log_type} />
                           </td>
-                          <td class="px-2 py-1.5">
+                          <td class="px-3 py-1.5">
                             <ActionPill action={row.rule_action} dhcpEvent={row.dhcp_event} wifiEvent={row.wifi_event} />
                           </td>
-                          <td class="px-2 py-1.5">
+                          <td class="px-3 py-1.5">
                             <AddressCell ip={row.src_ip} port={row.src_port} name={addressName(row, 'src')} />
                           </td>
                           <td
-                            class={`px-1 py-1.5 text-center text-sm ${directionColorClass(row.direction)}`}
+                            class={`px-3 py-1.5 text-center text-sm ${directionColorClass(row.direction)}`}
                             title={row.direction ?? undefined}
                           >
                             {directionGlyph(row.direction)}
                           </td>
-                          <td class="px-2 py-1.5">
+                          <td class="px-3 py-1.5">
                             <AddressCell ip={row.dst_ip} port={row.dst_port} name={addressName(row, 'dst')} />
                           </td>
                           <Show when={showCol('country')}>
-                            <td class="px-2 py-1.5 text-center">
+                            <td class="px-3 py-1.5 text-center">
                               <CountryCell code={row.geo_country} />
                             </td>
                           </Show>
                           <Show when={showCol('asn')}>
-                            <td class="px-2 py-1.5">
+                            <td class="px-3 py-1.5">
                               <AsnCell name={row.asn_name} />
                             </td>
                           </Show>
@@ -668,32 +729,32 @@ export default function LogsView(props: { query: string }) {
                               Die rohen Kennungen bleiben im Tooltip — wer
                               `br15` sucht, soll es finden. */}
                           <td
-                            class="px-2 py-1.5 text-[12px] text-gray-600 dark:text-gray-300 whitespace-nowrap"
+                            class="px-3 py-1.5 text-[12px] text-gray-600 dark:text-gray-300"
                             title={networkPath(row.iface_in, row.iface_out)}
                           >
                             {namedNetworkPath(row.iface_in, row.iface_out)}
                           </td>
                           <Show when={showCol('proto')}>
-                            <td class="px-2 py-1.5 text-[12px] text-gray-400 uppercase">{protocolName(row.protocol) ?? '—'}</td>
+                            <td class="px-3 py-1.5 text-[12px] text-gray-400 uppercase">{protocolName(row.protocol) ?? '—'}</td>
                           </Show>
-                          <td class="px-2 py-1.5 text-[12px] text-gray-400 whitespace-nowrap">
+                          <td class="px-3 py-1.5 text-[12px] text-gray-400">
                             {serviceFor(row)}
                           </td>
                           <Show when={showCol('rule')}>
                             <td
-                              class="px-2 py-1.5 text-[12px] text-gray-400 whitespace-nowrap max-w-[480px] truncate"
+                              class="px-3 py-1.5 text-[12px] text-gray-400"
                               title={infoFor(row)}
                             >
                               {infoFor(row)}
                             </td>
                           </Show>
                           <Show when={showCol('threat')}>
-                            <td class="px-2 py-1.5 text-[13px]">
+                            <td class="px-3 py-1.5 text-[13px]">
                               <ThreatCell score={row.threat_score} />
                             </td>
                           </Show>
                           <Show when={showCol('categories')}>
-                            <td class="px-2 py-1.5">
+                            <td class="px-3 py-1.5">
                               <CategoriesCell categories={row.threat_categories} />
                             </td>
                           </Show>

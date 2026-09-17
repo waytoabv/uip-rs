@@ -6,7 +6,10 @@ export default defineConfig({
   plugins: [solid()],
   server: {
     proxy: {
-      '/api': { target: 'http://localhost:8080', changeOrigin: true },
+      // UIP_API zeigt den Dev-Server auf eine andere Instanz — praktisch, um
+      // eine Oberflächenänderung gegen echte Daten anzusehen, statt gegen die
+      // paar Zeilen einer lokalen Datenbank.
+      '/api': { target: process.env.UIP_API ?? 'http://localhost:8080', changeOrigin: true },
     },
   },
   // Vitest runs under Node's module resolution, which would otherwise pick
