@@ -76,13 +76,31 @@ function daysSince(iso: string | null | undefined): number | null {
 }
 
 /**
- * Das Kontingent als „987/1000", oder nur „987", solange das Limit unbekannt
- * ist. AbuseIPDB nennt es erst in der ersten Antwort.
+ * Der Kontingent-Verbrauch als „882/1.000" — verbraucht von verfügbar, wie es
+ * die Vorlage zeigt. Die Quelle meldet das Gegenteil (den Rest), und genau das
+ * stand hier vorher: „118/1.000" las sich wie 118 verbrauchte Abfragen, waren
+ * aber 118 übrige.
+ *
+ * Ohne bekanntes Limit lässt sich kein Verbrauch bilden; dann steht der Rest
+ * da, ausdrücklich beschriftet.
  */
 function quotaText(q: Status['abuseipdb']): string {
   if (!q) return '—';
-  const left = q.remaining.toLocaleString('en-GB');
-  return q.limit == null ? left : `${left}/${q.limit.toLocaleString('en-GB')}`;
+  if (q.limit == null) return `${q.remaining.toLocaleString('en-GB')} left`;
+  const used = q.limit - q.remaining;
+  return `${used.toLocaleString('en-GB')}/${q.limit.toLocaleString('en-GB')}`;
+}
+
+/**
+ * Nach einer 429 ruht die Quelle bis zum Reset. Das ist eine andere Aussage
+ * als „Kontingent alle" und bekommt deshalb einen eigenen Text: hier zählt,
+ * wann es weitergeht.
+ */
+function pausedText(q: Status['abuseipdb']): string | null {
+  if (!q?.paused_until) return null;
+  const until = new Date(q.paused_until);
+  if (Number.isNaN(until.getTime()) || until.getTime() <= Date.now()) return null;
+  return `⏸ Paused · Resumes ${until.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 async function pingHealth(): Promise<boolean> {
@@ -211,12 +229,22 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
                 ? 'No AbuseIPDB response yet — no key, or nothing looked up so far'
                 : quotaSpent()
                   ? 'Daily quota spent — threat scores resume after the reset'
-                  : 'Checks left in the current AbuseIPDB quota'
+                  : 'Checks used out of the daily AbuseIPDB quota'
             }
           >
-            AbuseIPDB: {quotaText(status()?.abuseipdb ?? null)}
-            <Show when={status()?.abuseipdb?.reset_at}>
-              {' · '}Reset {stamp(status()!.abuseipdb!.reset_at)}
+            AbuseIPDB:{' '}
+            <Show
+              when={pausedText(status()?.abuseipdb ?? null)}
+              fallback={
+                <>
+                  {quotaText(status()?.abuseipdb ?? null)}
+                  <Show when={status()?.abuseipdb?.reset_at}>
+                    {' · '}Reset {stamp(status()!.abuseipdb!.reset_at)}
+                  </Show>
+                </>
+              }
+            >
+              {pausedText(status()?.abuseipdb ?? null)}
             </Show>
           </span>
           <span class="text-xs text-gray-400 dark:text-gray-600">|</span>

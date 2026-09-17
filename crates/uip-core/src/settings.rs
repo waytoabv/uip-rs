@@ -35,6 +35,15 @@ async fn get(pool: &PgPool, key: &str) -> Option<Value> {
         .flatten()
 }
 
+/// Liest einen Wert aus `system_config`.
+///
+/// Für alles, was nicht beim Start feststeht: der Einstellungs-Dialog schreibt
+/// dorthin, und ein laufender Hintergrunddienst soll die Änderung mitbekommen,
+/// ohne dass jemand den Dienst neu startet.
+pub async fn get_config(pool: &PgPool, key: &str) -> Option<Value> {
+    get(pool, key).await
+}
+
 /// Schreibt einen Wert nach `system_config`.
 ///
 /// Öffentlich, weil nicht nur die Einstellungen diesen Weg nehmen: Anreicherung

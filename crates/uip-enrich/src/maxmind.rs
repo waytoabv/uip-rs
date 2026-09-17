@@ -39,6 +39,15 @@ const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// als Nächstes an.
 const RETRY_AFTER: Duration = Duration::from_secs(60 * 60);
 
+/// Solange keine Zugangsdaten hinterlegt sind, wird nur nachgesehen, ob
+/// inzwischen welche da sind. Eine Minute, weil das der Weg vom Eintippen im
+/// Einstellungs-Dialog bis zum ersten Download ist.
+const UNCONFIGURED_POLL: Duration = Duration::from_secs(60);
+
+/// Vorgabe wie in `uip_core::Settings` — dieselbe Zeichenkette, damit ein
+/// leeres `geoip_dir` hier und dort dasselbe bedeutet.
+const DEFAULT_DIR: &str = "/var/lib/uip/geoip";
+
 pub struct Maxmind {
     account_id: String,
     license_key: String,
@@ -183,13 +192,37 @@ async fn record(
     .await;
 }
 
+/// Die Zugangsdaten, wie sie gerade in den Einstellungen stehen.
+async fn credentials(pool: &PgPool) -> Option<(String, String, PathBuf)> {
+    let text = |v: Option<serde_json::Value>| {
+        v.and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty())
+    };
+    let account = text(uip_core::settings::get_config(pool, "maxmind_account_id").await)?;
+    let key = text(uip_core::settings::get_config(pool, "maxmind_license_key").await)?;
+    let dir = text(uip_core::settings::get_config(pool, "geoip_dir").await)
+        .unwrap_or_else(|| DEFAULT_DIR.to_string());
+    Some((account, key, PathBuf::from(dir)))
+}
+
 /// Prüft beim Start und danach täglich, ob es neue Datenbanken gibt.
+///
+/// Die Zugangsdaten werden bei *jedem* Durchlauf frisch gelesen, nicht einmal
+/// beim Start. Das ist der Unterschied zwischen „im Dialog eintragen wirkt"
+/// und „im Dialog eintragen wirkt nach einem Neustart" — und bis hierher war
+/// es Letzteres: wer den Schlüssel nachträglich hinterlegte, bekam nie eine
+/// Datenbank, weil die Aufgabe beim Start mangels Zugangsdaten gar nicht erst
+/// angelegt wurde.
 ///
 /// `geo` wird nach einem erfolgreichen Download neu geladen, damit die
 /// Anreicherung die frischen Dateien sofort benutzt, statt bis zum nächsten
 /// Neustart mit den alten weiterzuarbeiten.
-pub async fn run_updater(client: Maxmind, pool: PgPool, geo: Arc<MaxmindGeo>) {
+pub async fn run_updater(pool: PgPool, geo: Arc<MaxmindGeo>) {
     loop {
+        let Some((account, key, dir)) = credentials(&pool).await else {
+            tokio::time::sleep(UNCONFIGURED_POLL).await;
+            continue;
+        };
+        let client = Maxmind::new(account, key, dir);
         let mut editions = serde_json::Map::new();
         let mut failure: Option<String> = None;
         let mut any_new = false;
@@ -291,6 +324,32 @@ mod tests {
         assert!(!target.exists());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Der eigentliche Fehler, den das hier behebt: die Zugangsdaten kamen
+    /// über den Einstellungs-Dialog, gelesen wurden sie aber nur beim Start.
+    /// Wer sie nachtrug, bekam nie eine Datenbank. Also muss jeder Durchlauf
+    /// sie frisch aus der Datenbank holen.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn credentials_are_read_fresh_and_not_captured_at_startup(pool: sqlx::PgPool) {
+        assert!(credentials(&pool).await.is_none(), "ohne Eintrag kein Abruf");
+
+        uip_core::settings::put_config(&pool, "maxmind_account_id", "1395678".into()).await;
+        assert!(credentials(&pool).await.is_none(), "die Account-Id allein genügt nicht");
+
+        uip_core::settings::put_config(&pool, "maxmind_license_key", "secret".into()).await;
+        let (account, key, dir) = credentials(&pool).await.expect("jetzt vollständig");
+        assert_eq!((account.as_str(), key.as_str()), ("1395678", "secret"));
+        assert_eq!(dir, PathBuf::from(DEFAULT_DIR), "ohne eigenes Verzeichnis die Vorgabe");
+
+        // Ein leerer Schlüssel ist kein Schlüssel — sonst liefe jeder Abruf in
+        // eine 401 statt einfach zu warten.
+        uip_core::settings::put_config(&pool, "maxmind_license_key", "".into()).await;
+        assert!(credentials(&pool).await.is_none());
+
+        uip_core::settings::put_config(&pool, "maxmind_license_key", "secret".into()).await;
+        uip_core::settings::put_config(&pool, "geoip_dir", "/srv/geo".into()).await;
+        assert_eq!(credentials(&pool).await.unwrap().2, PathBuf::from("/srv/geo"));
     }
 
     /// Die URL ist die aus der Doku — Tippfehler darin fielen sonst erst im

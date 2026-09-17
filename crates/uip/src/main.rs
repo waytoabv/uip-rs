@@ -51,21 +51,10 @@ async fn main() -> anyhow::Result<()> {
     // hinterlegt sind — vorher lag das bei geoipupdate und einem systemd-Timer,
     // und wer den Schlüssel erst nach dem Installieren bekam, hatte keinen Weg
     // mehr hinein.
-    match (&settings.maxmind_account_id, &settings.maxmind_license_key) {
-        (Some(account), Some(key)) => {
-            tracing::info!(dir = %settings.geoip_dir.display(), "geolite2 updates enabled");
-            tokio::spawn(uip_enrich::maxmind::run_updater(
-                uip_enrich::maxmind::Maxmind::new(
-                    account.clone(),
-                    key.clone(),
-                    settings.geoip_dir.clone(),
-                ),
-                pool.clone(),
-                geo.clone(),
-            ));
-        }
-        _ => tracing::info!("no maxmind credentials, geoip stays with whatever is on disk"),
-    }
+    // Bedingungslos: die Aufgabe liest die Zugangsdaten selbst und wartet, bis
+    // welche da sind. Hier auf `settings` zu prüfen hieße, dass ein im Dialog
+    // nachgetragener Schlüssel erst nach einem Neustart etwas bewirkt.
+    tokio::spawn(uip_enrich::maxmind::run_updater(pool.clone(), geo.clone()));
 
     let rdns: Option<Arc<dyn uip_enrich::RdnsSource>> = if settings.rdns_enabled {
         match uip_enrich::rdns::Rdns::from_system() {
