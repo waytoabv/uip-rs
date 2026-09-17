@@ -77,10 +77,26 @@ function buildUrl(path: string, query: string, extra?: Record<string, string>): 
   return qs ? `${path}?${qs}` : path;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  return (await res.json()) as T;
+/**
+ * Holt eine Karte — und sagt, ob es geklappt hat.
+ *
+ * `res.ok` wurde vorher nicht geprüft: bei einem Fehler warf `json()`, das
+ * `then` lief nie, und die Karte behielt ihren Anfangswert. Auf dem Schirm
+ * stand dann „No data" — eine Aussage über die Daten, wo in Wahrheit eine über
+ * die Abfrage nötig gewesen wäre.
+ */
+async function fetchJson<T>(url: string): Promise<T | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
 }
+
+/** Was eine Karte gerade zu sagen hat. */
+type Load = 'loading' | 'ready' | 'failed';
 
 /** Der Filter, den ein Klick auf eine Top-Zeile dieser Dimension setzt. */
 function filterFor(dim: Dimension, row: TopRow): Record<string, string> {
@@ -157,23 +173,45 @@ export default function Dashboard(props: { query: string; onFilter: (patch: Reco
   const [stats, setStats] = createSignal<Stats>(EMPTY_STATS);
   const [series, setSeries] = createSignal<Series>({ bucket: '', points: [] });
   const [tops, setTops] = createSignal<Partial<Record<Dimension, TopRow[]>>>({});
+  const [state, setState] = createSignal<Load>('loading');
+
+  /** Was in einer leeren Karte steht — und warum sie leer ist. */
+  const emptyText = () =>
+    state() === 'loading' ? 'Loading…' : state() === 'failed' ? 'Could not load' : 'No data';
 
   createEffect(() => {
     const q = props.query;
     let cancelled = false;
 
-    fetchJson<Stats>(buildUrl('/api/stats', q)).then((s) => {
-      if (!cancelled) setStats(s);
-    });
-    fetchJson<Series>(buildUrl('/api/stats/series', q)).then((s) => {
-      if (!cancelled) setSeries(s);
-    });
+    // Bei acht Millionen Zeilen braucht `/api/stats` zwanzig Sekunden. So lange
+    // „No data" zu zeigen, behauptet ein leeres Netz — der Zustand muss
+    // „wird geladen" heißen, bis eine Antwort da ist.
+    setState('loading');
     setTops({});
-    for (const dim of DIMENSIONS) {
-      fetchJson<{ rows: TopRow[] }>(buildUrl('/api/stats/top', q, { what: dim.id, limit: '8' })).then((res) => {
-        if (!cancelled) setTops((prev) => ({ ...prev, [dim.id]: res.rows ?? [] }));
-      });
-    }
+
+    void Promise.all([
+      fetchJson<Stats>(buildUrl('/api/stats', q)).then((s) => {
+        if (!cancelled && s) setStats(s);
+        return s;
+      }),
+      fetchJson<Series>(buildUrl('/api/stats/series', q)).then((s) => {
+        if (!cancelled && s) setSeries(s);
+        return s;
+      }),
+      ...DIMENSIONS.map((dim) =>
+        fetchJson<{ rows: TopRow[] }>(buildUrl('/api/stats/top', q, { what: dim.id, limit: '8' })).then(
+          (res) => {
+            if (!cancelled && res) setTops((prev) => ({ ...prev, [dim.id]: res.rows ?? [] }));
+            return res;
+          },
+        ),
+      ),
+    ]).then((all) => {
+      if (cancelled) return;
+      // Gescheitert heißt: keine einzige Karte kam durch. Kommt etwas an,
+      // beschreiben die leeren Karten dann wirklich leere Daten.
+      setState(all.every((r) => r === null) ? 'failed' : 'ready');
+    });
 
     return () => {
       cancelled = true;
@@ -233,7 +271,7 @@ export default function Dashboard(props: { query: string; onFilter: (patch: Reco
               {([type, n]) => <span class={`${PILL} ${logTypeClass(type)}`}>{type} {formatNumber(n)}</span>}
             </For>
             <Show when={byTypeEntries().length === 0}>
-              <span class="text-xs text-[var(--muted)]">No data</span>
+              <span class="text-xs text-[var(--muted)]">{emptyText()}</span>
             </Show>
           </div>
         </div>
@@ -241,7 +279,7 @@ export default function Dashboard(props: { query: string; onFilter: (patch: Reco
 
       <div class={CARD}>
         <div class={`${CARD_TITLE} mb-3`}>Traffic Over Time</div>
-        <TrafficOverTimeChart points={points()} bucket={series().bucket} />
+        <TrafficOverTimeChart points={points()} bucket={series().bucket} empty={emptyText()} />
       </div>
 
       <div class={CARD}>
@@ -256,7 +294,7 @@ export default function Dashboard(props: { query: string; onFilter: (patch: Reco
             </span>
           </div>
         </div>
-        <TrafficByActionChart points={points()} bucket={series().bucket} />
+        <TrafficByActionChart points={points()} bucket={series().bucket} empty={emptyText()} />
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -268,7 +306,9 @@ export default function Dashboard(props: { query: string; onFilter: (patch: Reco
               <div class={`${CARD} flex flex-col`}>
                 <div class={`${CARD_TITLE} mb-3`}>{dim.title}</div>
                 <Show when={rows().length === 0}>
-                  <div class="flex-1 flex items-center justify-center text-sm text-[var(--muted)] py-4">No data</div>
+                  <div class="flex-1 flex items-center justify-center text-sm text-[var(--muted)] py-4">
+                    {emptyText()}
+                  </div>
                 </Show>
                 <div class="flex flex-col">
                   <For each={rows()}>
