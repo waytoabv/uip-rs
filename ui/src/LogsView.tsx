@@ -297,7 +297,9 @@ function CategoriesCell(props: { categories: string[] | null }) {
 }
 
 
-const WIDTHS_STORAGE_KEY = 'uip-log-column-widths';
+// v2: die Breiten davor entstanden ohne Obergrenzen je Spalte und würden
+// die neuen überstimmen, ohne dass jemand sie gezogen hätte.
+const WIDTHS_STORAGE_KEY = 'uip-log-column-widths-v2';
 
 /** Von Hand gezogene Spaltenbreiten, sofern welche gespeichert sind. */
 function storedWidths(): Record<string, number> {
@@ -338,20 +340,21 @@ const MIN_COLUMN = 48;
  * (ASN, IPv6) oder werden gekürzt, mit dem ganzen Wert im Tooltip.
  */
 const COLUMN_MAX: Record<string, number> = {
-  time: 96,
-  type: 112,
-  action: 96,
-  source: 190,
-  destination: 190,
-  country: 96,
-  asn: 190,
+  time: 76,
+  type: 92,
+  action: 80,
+  // Gemessener Inhalt: 166 px. Mehr ist Luft zwischen Quelle, Pfeil und Ziel.
+  source: 172,
+  destination: 172,
+  country: 72,
+  asn: 176,
   // Netznamen tragen beide Seiten: „#1 - VLAN15 - Intern → #0 - VLAN 10 - Server".
-  network: 300,
-  proto: 80,
-  service: 120,
-  rule_info: 230,
-  abuseipdb: 112,
-  categories: 190,
+  network: 264,
+  proto: 60,
+  service: 96,
+  rule_info: 200,
+  abuseipdb: 88,
+  categories: 152,
 };
 const MAX_COLUMN_FALLBACK = 240;
 
@@ -399,7 +402,7 @@ function Th(props: { key: string; label: string; center?: boolean }) {
     <th
       data-col={props.key}
       style={width() == null ? undefined : { width: `${width()}px` }}
-      class={`relative whitespace-nowrap px-3 py-2 text-[12px] font-medium uppercase tracking-wider text-gray-600 dark:text-gray-400 ${
+      class={`relative whitespace-nowrap px-2 py-2 text-[12px] font-medium uppercase tracking-wider text-gray-600 dark:text-gray-400 ${
         props.center ? 'text-center' : ''
       }`}
     >
@@ -449,6 +452,23 @@ export default function LogsView(props: { query: string }) {
    * Inhaltsbreite, danach auf genau diesen Werten. Der eine Zwischenschritt
    * ist derselbe Inhalt in derselben Breite — zu sehen ist er nicht.
    */
+  /**
+   * Die Summe der gesetzten Spaltenbreiten.
+   *
+   * `w-max` bestimmt die Tabellenbreite aus dem Inhalt, nicht aus diesen
+   * Werten — bei `table-fixed` landet die Differenz dann vollständig in der
+   * letzten Spalte. Gemessen waren das 673 Pixel Luft in „Categories", während
+   * zwischen Quelle und Ziel nichts zusammenrückte. Also die Breite
+   * ausdrücklich setzen.
+   */
+  const tableWidth = () => {
+    const w = measured();
+    const keys = Object.keys(w);
+    if (!keys.length) return undefined;
+    const sum = keys.reduce((n, k) => n + (columnWidths()[k] ?? w[k]), 0);
+    return `${sum}px`;
+  };
+
   const measureColumns = () => {
     if (!tableRef) return;
     const next: Record<string, number> = {};
@@ -462,12 +482,20 @@ export default function LogsView(props: { query: string }) {
     if (Object.keys(next).length) setMeasured(next);
   };
 
-  // Neue Daten heißen neue Breiten. Erst verwerfen — dann legt der Browser die
-  // Tabelle wieder nach Inhalt aus — und im nächsten Bild messen.
-  const remeasure = () => {
-    setMeasured({});
+  // Neue Daten heißen neue Breiten: verwerfen, dann legt der Browser die
+  // Tabelle wieder nach Inhalt aus. Gemessen wird nicht hier, sondern im
+  // Effekt darunter — ein `requestAnimationFrame` direkt nach dem Laden traf
+  // manchmal einen Zeitpunkt, an dem die Zeilen noch nicht standen, und dann
+  // blieb die Messung für diese Seite ganz aus.
+  const remeasure = () => setMeasured({});
+
+  // Solange Zeilen da sind, aber keine Breiten, wird gemessen. Der Effekt
+  // läuft bei jeder Änderung an beidem erneut, hebt sich also selbst auf,
+  // sobald es etwas zu messen gab.
+  createEffect(() => {
+    if (rows().length === 0 || Object.keys(measured()).length > 0) return;
     requestAnimationFrame(() => requestAnimationFrame(measureColumns));
-  };
+  });
 
   function toggleColumn(key: string) {
     setHiddenColumns((prev) => {
@@ -666,7 +694,7 @@ export default function LogsView(props: { query: string }) {
       </div>
 
       <Show when={suspended()}>
-        <p class="px-3 py-1.5 text-[11px] text-amber-800 dark:text-amber-400 bg-amber-500/10 border-b border-amber-500/30">
+        <p class="px-2 py-1.5 text-[11px] text-amber-800 dark:text-amber-400 bg-amber-500/10 border-b border-amber-500/30">
           Live-Stream pausiert: dieser Filter fragt nach Feldern (Land, Threat-Score, ASN), die erst nach der
           Anreicherung bekannt sind.
         </p>
@@ -683,8 +711,9 @@ export default function LogsView(props: { query: string }) {
             umzubauen. Davor `auto`, damit überhaupt etwas zu messen ist. */}
         <table
           ref={tableRef}
-          class={`log-table w-max text-left border-collapse ${
-            Object.keys(measured()).length ? 'table-fixed' : ''
+          style={{ width: tableWidth() }}
+          class={`log-table text-left border-collapse ${
+            Object.keys(measured()).length ? 'table-fixed' : 'w-max'
           }`}
         >
           <thead class="sticky top-0 z-10 bg-gray-100 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
@@ -693,7 +722,7 @@ export default function LogsView(props: { query: string }) {
               <Th key="type" label="Type" />
               <Th key="action" label="Action" />
               <Th key="source" label="Source" />
-              <th class="px-3 py-2" data-col="direction"></th>
+              <th class="px-1 py-2" data-col="direction"></th>
               <Th key="destination" label="Destination" />
               <Show when={showCol('country')}>
                 <Th key="country" label="Country" center />
@@ -756,7 +785,7 @@ export default function LogsView(props: { query: string }) {
                                 : ''
                           }`}
                         >
-                          <td class="px-3 py-1.5" title={row.timestamp}>
+                          <td class="px-2 py-1.5" title={row.timestamp}>
                             <div class="text-[13px] font-light text-gray-500 dark:text-gray-400">
                               {formatClock(row.timestamp)}
                             </div>
@@ -764,31 +793,31 @@ export default function LogsView(props: { query: string }) {
                               {formatDateShort(row.timestamp)}
                             </div>
                           </td>
-                          <td class="px-3 py-1.5">
+                          <td class="px-2 py-1.5">
                             <TypePill type={row.log_type} />
                           </td>
-                          <td class="px-3 py-1.5">
+                          <td class="px-2 py-1.5">
                             <ActionPill action={row.rule_action} dhcpEvent={row.dhcp_event} wifiEvent={row.wifi_event} />
                           </td>
-                          <td class="px-3 py-1.5">
+                          <td class="px-2 py-1.5">
                             <AddressCell ip={row.src_ip} port={row.src_port} name={addressName(row, 'src')} />
                           </td>
                           <td
-                            class={`px-3 py-1.5 text-center text-sm ${directionColorClass(row.direction)}`}
+                            class={`px-1 py-1.5 text-center text-sm ${directionColorClass(row.direction)}`}
                             title={row.direction ?? undefined}
                           >
                             {directionGlyph(row.direction)}
                           </td>
-                          <td class="px-3 py-1.5">
+                          <td class="px-2 py-1.5">
                             <AddressCell ip={row.dst_ip} port={row.dst_port} name={addressName(row, 'dst')} />
                           </td>
                           <Show when={showCol('country')}>
-                            <td class="px-3 py-1.5 text-center">
+                            <td class="px-2 py-1.5 text-center">
                               <CountryCell code={row.geo_country} />
                             </td>
                           </Show>
                           <Show when={showCol('asn')}>
-                            <td class="px-3 py-1.5">
+                            <td class="px-2 py-1.5">
                               <AsnCell name={row.asn_name} />
                             </td>
                           </Show>
@@ -796,32 +825,32 @@ export default function LogsView(props: { query: string }) {
                               Die rohen Kennungen bleiben im Tooltip — wer
                               `br15` sucht, soll es finden. */}
                           <td
-                            class="px-3 py-1.5 text-[12px] text-gray-600 dark:text-gray-300"
+                            class="px-2 py-1.5 text-[12px] text-gray-600 dark:text-gray-300"
                             title={networkPath(row.iface_in, row.iface_out)}
                           >
                             {namedNetworkPath(row.iface_in, row.iface_out)}
                           </td>
                           <Show when={showCol('proto')}>
-                            <td class="px-3 py-1.5 text-[12px] uppercase text-gray-600 dark:text-gray-400">{protocolName(row.protocol) ?? '—'}</td>
+                            <td class="px-2 py-1.5 text-[12px] uppercase text-gray-600 dark:text-gray-400">{protocolName(row.protocol) ?? '—'}</td>
                           </Show>
-                          <td class="px-3 py-1.5 text-[12px] text-gray-600 dark:text-gray-400" title={serviceFor(row)}>
+                          <td class="px-2 py-1.5 text-[12px] text-gray-600 dark:text-gray-400" title={serviceFor(row)}>
                             {serviceFor(row)}
                           </td>
                           <Show when={showCol('rule')}>
                             <td
-                              class="px-3 py-1.5 text-[12px] text-gray-600 dark:text-gray-400"
+                              class="px-2 py-1.5 text-[12px] text-gray-600 dark:text-gray-400"
                               title={infoFor(row)}
                             >
                               {infoFor(row)}
                             </td>
                           </Show>
                           <Show when={showCol('threat')}>
-                            <td class="px-3 py-1.5 text-[13px]">
+                            <td class="px-2 py-1.5 text-[13px]">
                               <ThreatCell score={row.threat_score} />
                             </td>
                           </Show>
                           <Show when={showCol('categories')}>
-                            <td class="px-3 py-1.5">
+                            <td class="px-2 py-1.5">
                               <CategoriesCell categories={row.threat_categories} />
                             </td>
                           </Show>
