@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
-use uip_core::{Config, LiveRow, LookupCache};
+use uip_core::{Config, LiveEvent, LookupCache};
 use uip_ingest::firewall::FirewallCtx;
 
 #[tokio::main]
@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
     let cache = Arc::new(LookupCache::new());
     let (log_tx, log_rx) = tokio::sync::mpsc::channel(8192);
     let pihole_tx = log_tx.clone();
-    let (event_tx, _) = tokio::sync::broadcast::channel::<Arc<LiveRow>>(1024);
+    let (event_tx, _) = tokio::sync::broadcast::channel::<LiveEvent>(1024);
 
     let writer = tokio::spawn(uip_ingest::writer::run_writer(
         log_rx, pool.clone(), cache, event_tx.clone(), wake_enricher.clone(),
@@ -99,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
         uip_enrich::Sources { geo, rdns, threat, rdns_enabled },
         uip_enrich::Exclusions(settings.exclusions()),
         wake_enricher,
+        Some(event_tx.clone()),
     ));
 
     // Pi-hole liefert DNS-Abfragen, die am Gateway-Syslog vorbeilaufen. Die

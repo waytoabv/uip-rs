@@ -121,7 +121,7 @@ async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row
 async fn flush(
     rows: &mut Vec<Row>,
     pool: &PgPool,
-    events: &broadcast::Sender<Arc<LiveRow>>,
+    events: &broadcast::Sender<uip_core::LiveEvent>,
     wake_enricher: &Arc<tokio::sync::Notify>,
 ) {
     if rows.is_empty() {
@@ -169,7 +169,7 @@ async fn flush(
     match res {
         Ok(_) => {
             for r in rows.drain(..) {
-                let _ = events.send(r.live); // niemand hört zu → egal
+                let _ = events.send(uip_core::LiveEvent::Row(r.live)); // niemand hört zu → egal
             }
             tracing::debug!(rows = n, "flushed batch");
             // Weckt den Enrichment-Worker: es gibt jetzt frische Zeilen mit
@@ -188,7 +188,7 @@ pub async fn run_writer(
     mut rx: mpsc::Receiver<ParsedLog>,
     pool: PgPool,
     cache: Arc<LookupCache>,
-    events: broadcast::Sender<Arc<LiveRow>>,
+    events: broadcast::Sender<uip_core::LiveEvent>,
     wake_enricher: Arc<tokio::sync::Notify>,
 ) {
     let mut buf: Vec<Row> = Vec::with_capacity(BATCH_MAX);
@@ -244,6 +244,7 @@ mod tests {
         assert_eq!(status, 0); // pending für Phase-2-Worker
         assert_eq!(lt, 1);
         let evt = brx.recv().await.unwrap();
+        let uip_core::LiveEvent::Row(evt) = evt else { panic!("eine Zeile, kein Nachtrag") };
         assert_eq!(evt.src_ip, Some("1.2.3.4".parse().unwrap()));
     }
 }

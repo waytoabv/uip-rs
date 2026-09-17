@@ -18,24 +18,23 @@ pub mod stream;
 use axum::routing::get;
 use axum::Router;
 use sqlx::PgPool;
-use std::sync::Arc;
 use tokio::sync::broadcast;
-use uip_core::LiveRow;
+use uip_core::LiveEvent;
 
 #[derive(Clone)]
 pub struct ApiState {
     pub pool: PgPool,
-    pub events: broadcast::Sender<Arc<LiveRow>>,
+    pub events: broadcast::Sender<LiveEvent>,
 }
 
 impl axum::extract::FromRef<ApiState> for PgPool {
     fn from_ref(s: &ApiState) -> PgPool { s.pool.clone() }
 }
-impl axum::extract::FromRef<ApiState> for broadcast::Sender<Arc<LiveRow>> {
-    fn from_ref(s: &ApiState) -> broadcast::Sender<Arc<LiveRow>> { s.events.clone() }
+impl axum::extract::FromRef<ApiState> for broadcast::Sender<LiveEvent> {
+    fn from_ref(s: &ApiState) -> broadcast::Sender<LiveEvent> { s.events.clone() }
 }
 
-pub fn router(pool: PgPool, events: broadcast::Sender<Arc<LiveRow>>) -> Router {
+pub fn router(pool: PgPool, events: broadcast::Sender<LiveEvent>) -> Router {
     Router::new()
         .route("/api/health", get(|| async { "ok" }))
         .route("/api/status", get(status::get_status))

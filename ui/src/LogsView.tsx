@@ -18,6 +18,7 @@ import {
 } from './LogHelpers';
 import LogRowDetail from './LogRowDetail';
 import { namedNetworkPath } from './interfaceLabels';
+import { applyEnrichment, type Enrichment } from './enrichment';
 
 const PAGE_SIZE = 50;
 /** TIME, TYPE, ACTION, SOURCE, dir, DESTINATION, COUNTRY, ASN, NETWORK, PROTO, SERVICE, RULE/INFO, ABUSEIPDB, CATEGORIES */
@@ -426,6 +427,14 @@ export default function LogsView(props: { query: string }) {
       const row = JSON.parse((e as MessageEvent).data) as LogEntry;
       setRows((prev) => [row, ...prev].slice(0, PAGE_SIZE));
       setLastUpdate(new Date());
+    });
+    // Nachtrag der Anreicherung: die Zeile ging hier raus, bevor Land, ASN
+    // und rDNS feststanden. Ohne das blieben genau die Zeilen, denen man beim
+    // Eintreffen zusieht, für immer ohne diese Angaben — während die
+    // Datenbank sie längst hat.
+    es.addEventListener('enriched', (e) => {
+      const facts = JSON.parse((e as MessageEvent).data) as Enrichment;
+      setRows((prev) => prev.map((row) => applyEnrichment(row, facts)));
     });
     es.addEventListener('suspended', () => setSuspended(true));
     onCleanup(() => es.close());

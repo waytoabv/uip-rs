@@ -3,6 +3,8 @@ use crate::types::{GeoSource, IpFacts, Quota, RdnsSource, ThreatOutcome, ThreatS
 use chrono::{DateTime, Utc};
 use ipnetwork::IpNetwork;
 use sqlx::{PgPool, Row};
+use tokio::sync::broadcast;
+use uip_core::LiveEvent;
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -190,6 +192,7 @@ pub async fn run_once(
     sources: &Sources,
     excluded: &Exclusions,
     limit: i64,
+    events: Option<&broadcast::Sender<LiveEvent>>,
 ) -> Result<usize, sqlx::Error> {
     let claimed = claim(pool, excluded, limit).await?;
     if claimed.is_empty() {
@@ -236,7 +239,36 @@ pub async fn run_once(
     }
 
     write_back(pool, &claimed, &facts, quota_ran_out, &wants_threat).await?;
+    announce(events, &facts);
     Ok(claimed.len())
+}
+
+/// Reicht nach, was gerade herausgefunden wurde.
+///
+/// Die Zeile ging an offene Ströme, bevor es diese Angaben gab — wer zusieht,
+/// hat sie mit leerem Land und leerer ASN vor sich und bekäme sie nie gefüllt.
+/// Bezug ist die Adresse, nicht die Zeile: dieselbe Auskunft gilt für jede
+/// Zeile, in der sie vorkommt, und spart je Durchlauf hunderte Ereignisse.
+fn announce(events: Option<&broadcast::Sender<LiveEvent>>, facts: &HashMap<IpAddr, IpFacts>) {
+    let Some(events) = events else { return };
+    for (ip, f) in facts {
+        if f.is_empty() {
+            continue;
+        }
+        let _ = events.send(LiveEvent::Enriched(Arc::new(uip_core::Enrichment {
+            ip: *ip,
+            geo_country: f.geo_country.clone(),
+            geo_city: f.geo_city.clone(),
+            geo_lat: f.geo_lat,
+            geo_lon: f.geo_lon,
+            asn_number: f.asn_number,
+            asn_name: f.asn_name.clone(),
+            rdns: f.rdns.clone(),
+            threat_score: f.threat_score,
+            threat_categories: f.threat_categories.clone(),
+            abuse_is_tor: f.abuse_is_tor,
+        })));
+    }
 }
 
 /// Schreibt die Ergebnisse in einem einzigen UPDATE zurück.
@@ -401,6 +433,7 @@ pub async fn run_worker(
     sources: Sources,
     excluded: Exclusions,
     wake: Arc<tokio::sync::Notify>,
+    events: Option<broadcast::Sender<LiveEvent>>,
 ) {
     if let Err(e) = release_stale_claims(&pool).await {
         tracing::error!(error = %e, "could not release stale claims at startup");
@@ -421,7 +454,7 @@ pub async fn run_worker(
                 last_quota = Some(q);
             }
         }
-        match run_once(&pool, &sources, &excluded, BATCH_SIZE).await {
+        match run_once(&pool, &sources, &excluded, BATCH_SIZE, events.as_ref()).await {
             Ok(0) => {
                 tokio::select! {
                     _ = wake.notified() => {}
@@ -489,7 +522,7 @@ mod tests {
         insert_row(&pool, 1, Some(1), Some(2), "8.8.8.8").await;
         let (_, s) = sources(ThreatOutcome::Found(IpFacts { threat_score: Some(77), ..Default::default() }));
 
-        let n = run_once(&pool, &s, &Default::default(), 100).await.unwrap();
+        let n = run_once(&pool, &s, &Default::default(), 100, None).await.unwrap();
         assert_eq!(n, 1);
 
         let (status, country, rdns, score): (i16, Option<String>, Option<String>, Option<i32>) =
@@ -506,7 +539,7 @@ mod tests {
         insert_row(&pool, 3, None, None, "192.168.1.50").await; // dhcp
         let (geo, s) = sources(ThreatOutcome::NotFound);
 
-        let n = run_once(&pool, &s, &Default::default(), 100).await.unwrap();
+        let n = run_once(&pool, &s, &Default::default(), 100, None).await.unwrap();
         assert_eq!(n, 1);
 
         let status: i16 = sqlx::query_scalar("SELECT enrich_status FROM logs LIMIT 1")
@@ -521,9 +554,40 @@ mod tests {
         insert_row(&pool, 1, Some(1), Some(2), "1.1.1.1").await;
         let (geo, s) = sources(ThreatOutcome::NotFound);
 
-        let n = run_once(&pool, &s, &Default::default(), 100).await.unwrap();
+        let n = run_once(&pool, &s, &Default::default(), 100, None).await.unwrap();
         assert_eq!(n, 6);
         assert_eq!(geo.calls.load(Ordering::SeqCst), 2, "zwei verschiedene Adressen, zwei Lookups");
+    }
+
+    /// Die Zeile ging an offene Ströme, bevor Land und ASN feststanden. Ohne
+    /// Nachtrag bliebe sie dort für immer leer — angereichert wird sie ja nur
+    /// in der Datenbank, nicht auf dem Schirm.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn enrichment_is_announced_for_the_address(pool: sqlx::PgPool) {
+        insert_row(&pool, 1, Some(1), Some(2), "8.8.8.8").await;
+        let (_geo, sources) = sources(ThreatOutcome::NotFound);
+        let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+
+        run_once(&pool, &sources, &Exclusions::default(), 100, Some(&tx)).await.unwrap();
+
+        let LiveEvent::Enriched(facts) = rx.try_recv().expect("ein Nachtrag") else {
+            panic!("ein Nachtrag, keine Zeile");
+        };
+        assert_eq!(facts.ip, "8.8.8.8".parse::<IpAddr>().unwrap());
+        assert_eq!(facts.geo_country.as_deref(), Some("US"));
+        assert_eq!(facts.asn_number, Some(15169));
+    }
+
+    /// Eine Adresse, über die nichts herauskam, wird nicht angekündigt — sonst
+    /// liefe bei rein internem Verkehr ein leeres Ereignis je Zeile mit.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn nothing_learned_means_nothing_announced(pool: sqlx::PgPool) {
+        insert_row(&pool, 1, Some(4), Some(1), "10.0.0.5").await;
+        let (_geo, sources) = sources(ThreatOutcome::NotFound);
+        let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+
+        run_once(&pool, &sources, &Exclusions::default(), 100, Some(&tx)).await.unwrap();
+        assert!(rx.try_recv().is_err(), "keine Gegenstelle, kein Nachtrag");
     }
 
     /// Der Punkt der ganzen Übung: was im Einstellungs-Dialog steht, wirkt im
@@ -557,7 +621,7 @@ mod tests {
         insert_row(&pool, 1, Some(1), Some(1), "8.8.8.8").await; // allow
         let (_, s) = sources(ThreatOutcome::Found(IpFacts { threat_score: Some(99), ..Default::default() }));
 
-        run_once(&pool, &s, &Default::default(), 100).await.unwrap();
+        run_once(&pool, &s, &Default::default(), 100, None).await.unwrap();
 
         let score: Option<i32> = sqlx::query_scalar("SELECT threat_score FROM logs LIMIT 1")
             .fetch_one(&pool).await.unwrap();
@@ -569,7 +633,7 @@ mod tests {
         insert_row(&pool, 1, Some(1), Some(2), "8.8.8.8").await;
         let (_, s) = sources(ThreatOutcome::QuotaExhausted);
 
-        run_once(&pool, &s, &Default::default(), 100).await.unwrap();
+        run_once(&pool, &s, &Default::default(), 100, None).await.unwrap();
 
         let (status, country): (i16, Option<String>) =
             sqlx::query_as("SELECT enrich_status, geo_country FROM logs LIMIT 1")
@@ -595,7 +659,7 @@ mod tests {
         insert_row(&pool, 1, Some(1), Some(2), "8.8.8.8").await;
         let (_, s) = sources(ThreatOutcome::NotFound);
 
-        run_once(&pool, &s, &Default::default(), 100).await.unwrap();
+        run_once(&pool, &s, &Default::default(), 100, None).await.unwrap();
 
         let country: Option<String> = sqlx::query_scalar(
             "SELECT geo_country FROM ip_enrichment WHERE ip = '8.8.8.8'",
@@ -634,7 +698,7 @@ mod tests {
             rdns_enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
 
-        let n = run_once(&pool, &s, &Default::default(), 100).await.unwrap();
+        let n = run_once(&pool, &s, &Default::default(), 100, None).await.unwrap();
         assert_eq!(n, 2);
 
         let mut rows: Vec<(String, Option<Vec<String>>)> = sqlx::query_as(

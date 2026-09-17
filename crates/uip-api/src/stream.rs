@@ -9,11 +9,10 @@ use axum::extract::{Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::stream::Stream;
 use std::net::IpAddr;
-use std::sync::Arc;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
-use uip_core::LiveRow;
+use uip_core::{LiveEvent, LiveRow};
 
 /// Was der Stream mit einer Zeile tun soll.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,7 +264,7 @@ pub fn matches_live(row: &LiveRow, f: &LogFilter) -> Verdict {
 }
 
 pub async fn sse_stream(
-    State(events): State<tokio::sync::broadcast::Sender<Arc<LiveRow>>>,
+    State(events): State<tokio::sync::broadcast::Sender<LiveEvent>>,
     Query(filter): Query<LogFilter>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     let rx = events.subscribe();
@@ -274,7 +273,14 @@ pub async fn sse_stream(
     // benachrichtigen.
     let mut suspended_sent = false;
     let stream = BroadcastStream::new(rx).filter_map(move |item| match item {
-        Ok(row) => match matches_live(&row, &filter) {
+        // Ein Nachtrag beschreibt eine Adresse, keine Zeile. Er geht ungefiltert
+        // durch: die Oberfläche trägt ihn nur in Zeilen ein, die sie ohnehin
+        // schon zeigt, und was sie nicht zeigt, geht ihn nichts an.
+        Ok(LiveEvent::Enriched(facts)) => {
+            let data = serde_json::to_string(&*facts).unwrap_or_default();
+            Some(Ok(Event::default().event("enriched").data(data)))
+        }
+        Ok(LiveEvent::Row(row)) => match matches_live(&row, &filter) {
             Verdict::Pass => {
                 let data = serde_json::to_string(&*row).unwrap_or_default();
                 Some(Ok(Event::default().event("log").data(data)))
