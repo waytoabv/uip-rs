@@ -141,9 +141,24 @@ fn bridge_for(net: &Value) -> Option<String> {
     if !net.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true) {
         return None;
     }
-    let vlan_enabled = net.get("vlan_enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-    let vlan = net.get("vlan").and_then(|v| v.as_i64()).filter(|_| vlan_enabled).unwrap_or(1);
+    // UniFi gibt Zahlen je nach Version mal als Zahl, mal als Zeichenkette
+    // zurück — `vlan` ist eine davon. Ein `as_i64` allein läse die Zeichenkette
+    // als „kein VLAN" und legte jedes Netz auf br0.
+    let vlan = number(net, "vlan");
+    // Fehlt `vlan_enabled` ganz, entscheidet die VLAN-Nummer selbst: ein Netz
+    // mit VLAN 15 liegt auf br15, ob das Feld nun mitgeschickt wurde oder nicht.
+    let enabled = net
+        .get("vlan_enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or_else(|| vlan.is_some_and(|v| v > 1));
+    let vlan = vlan.filter(|_| enabled).unwrap_or(1);
     Some(if vlan == 1 { "br0".to_string() } else { format!("br{vlan}") })
+}
+
+/// Eine Zahl, die auch als Zeichenkette ankommen darf.
+fn number(v: &Value, key: &str) -> Option<i64> {
+    let field = v.get(key)?;
+    field.as_i64().or_else(|| field.as_str()?.trim().parse().ok())
 }
 
 /// Die WAN-Schnittstellen, wie das Gateway sie meldet.
@@ -182,7 +197,7 @@ async fn store_networks(pool: &PgPool, networks: &[Value], devices: &[Value]) {
         let (Some(iface), Some(name)) = (bridge_for(net), text(net, "name")) else {
             continue;
         };
-        let vlan = net.get("vlan").and_then(|v| v.as_i64()).map(|v| v as i32);
+        let vlan = number(net, "vlan").map(|v| v as i32);
         upsert_network(pool, &iface, &name, vlan, text(net, "purpose").as_deref()).await;
         seen.push(iface);
     }
@@ -320,5 +335,66 @@ pub async fn run_unifi(pool: PgPool) {
             Err(e) => tracing::warn!(error = %e, "unifi sync failed"),
         }
         tokio::time::sleep(SYNC_EVERY).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// VLAN 15 liegt auf br15, das ungetaggte Vorgabenetz auf br0. Die Regel
+    /// steht nirgends in der API — sie ergibt sich daraus, wie das Gateway
+    /// seine Bridges benennt.
+    #[test]
+    fn a_network_maps_to_the_bridge_it_appears_on() {
+        let vlan15 = json!({"purpose": "corporate", "name": "IoT", "vlan": 15, "vlan_enabled": true});
+        assert_eq!(bridge_for(&vlan15).as_deref(), Some("br15"));
+
+        let default = json!({"purpose": "corporate", "name": "LAN", "vlan_enabled": false});
+        assert_eq!(bridge_for(&default).as_deref(), Some("br0"));
+
+        // Zahlen kommen je nach Version als Zeichenkette.
+        let as_text = json!({"purpose": "corporate", "name": "IoT", "vlan": "15", "vlan_enabled": true});
+        assert_eq!(bridge_for(&as_text).as_deref(), Some("br15"));
+
+        // Ohne `vlan_enabled` entscheidet die Nummer selbst.
+        let implied = json!({"purpose": "guest", "name": "Gast", "vlan": 20});
+        assert_eq!(bridge_for(&implied).as_deref(), Some("br20"));
+    }
+
+    /// WAN-Netze und abgeschaltete haben keine Bridge — und ein WAN-Eintrag
+    /// darf auf keinen Fall als br0 durchgehen, sonst trüge das LAN den Namen
+    /// der Internetverbindung.
+    #[test]
+    fn only_real_lan_segments_get_a_bridge() {
+        assert_eq!(bridge_for(&json!({"purpose": "wan", "name": "WAN"})), None);
+        assert_eq!(
+            bridge_for(&json!({"purpose": "corporate", "name": "Alt", "enabled": false})),
+            None
+        );
+        assert_eq!(bridge_for(&json!({"purpose": "remote-user-vpn", "name": "VPN"})), None);
+    }
+
+    /// Die WAN-Schnittstelle steht nur am Gerät. Genau diese Form meldet das
+    /// Gateway (`wan1.ifname`).
+    #[test]
+    fn the_wan_interface_comes_from_the_device() {
+        let devices = vec![
+            json!({}),
+            json!({"wan1": {"ifname": "eth1", "uplink_ifname": "eth1", "up": true}}),
+        ];
+        let networks = vec![json!({"purpose": "wan", "name": "Internet", "wan_networkgroup": "WAN"})];
+        assert_eq!(
+            wan_interfaces(&devices, &networks),
+            [("eth1".to_string(), "Internet".to_string())]
+        );
+
+        // Ohne passenden Netz-Eintrag bleibt die Gruppe als Name stehen —
+        // besser als gar keine Beschriftung und besser als eine erfundene.
+        assert_eq!(wan_interfaces(&devices, &[]), [("eth1".to_string(), "WAN".to_string())]);
+
+        // Ein Gerät ohne WAN-Angabe liefert nichts, statt zu raten.
+        assert!(wan_interfaces(&[json!({"name": "switch"})], &networks).is_empty());
     }
 }
