@@ -9,7 +9,6 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub wan_ips: HashSet<IpAddr>,
-    pub gateway_ips: HashSet<IpAddr>,
     pub rdns_enabled: bool,
     pub abuseipdb_key: Option<String>,
     pub geoip_dir: PathBuf,
@@ -97,10 +96,6 @@ impl Settings {
         }
 
         let wan_ips = parse_ips(&text(pool, "wan_ips", env("UIP_WAN_IPS"), "").await);
-        let gateway_ips = get(pool, "gateway_ips")
-            .await
-            .and_then(|v| v.as_str().map(parse_ips))
-            .unwrap_or_default();
 
         let rdns_enabled = match env("UIP_RDNS_ENABLED") {
             Some(raw) => {
@@ -131,7 +126,6 @@ impl Settings {
 
         Ok(Self {
             wan_ips,
-            gateway_ips,
             rdns_enabled,
             abuseipdb_key: Some(abuseipdb_key).filter(|k| !k.is_empty()),
             geoip_dir: PathBuf::from(geoip_dir),
@@ -148,8 +142,12 @@ impl Settings {
     }
 
     /// Alles, was nicht angereichert werden muss, weil es uns selbst gehört.
+    ///
+    /// Früher kam hier ein zweiter Satz „Gateway-Adressen" dazu, den jemand von
+    /// Hand eintragen musste — gelesen wurde er nie. Die eigene WAN-Adresse
+    /// meldet der Controller ohnehin selbst.
     pub fn exclusions(&self) -> HashSet<IpAddr> {
-        self.wan_ips.union(&self.gateway_ips).copied().collect()
+        self.wan_ips.clone()
     }
 }
 

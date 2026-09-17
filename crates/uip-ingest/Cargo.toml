@@ -13,3 +13,4 @@ ipnetwork = { workspace = true }
 mac_address = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
+arc-swap = { workspace = true }

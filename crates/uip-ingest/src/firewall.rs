@@ -6,10 +6,27 @@ use uip_core::types::LogType;
 pub const VPN_PREFIXES: [&str; 9] =
     ["wgsrv", "wgclt", "wgsts", "tlprt", "vti", "tunovpnc", "tun", "vtun", "l2tp"];
 
+/// Was der Parser über das eigene Netz wissen muss.
+///
+/// `wan_ips` liegt hinter einem `ArcSwap`, weil die Adresse sich ändert, ohne
+/// dass jemand etwas tut: bei einer dynamischen Verbindung vergibt der
+/// Anbieter regelmäßig eine neue. Einmal beim Start zu lesen hieße, dass die
+/// Richtungserkennung ab dem nächsten Wechsel danebenliegt, bis jemand den
+/// Dienst neu startet.
 #[derive(Debug, Clone, Default)]
 pub struct FirewallCtx {
     pub wan_interfaces: HashSet<String>,
-    pub wan_ips: HashSet<IpAddr>,
+    pub wan_ips: std::sync::Arc<arc_swap::ArcSwap<HashSet<IpAddr>>>,
+}
+
+impl FirewallCtx {
+    /// Nimmt einen neuen Satz WAN-Adressen an.
+    pub fn set_wan_ips(&self, ips: HashSet<IpAddr>) {
+        if **self.wan_ips.load() != ips {
+            tracing::info!(count = ips.len(), "wan addresses changed");
+            self.wan_ips.store(std::sync::Arc::new(ips));
+        }
+    }
 }
 
 fn is_vpn_iface(name: &str) -> bool {
@@ -69,7 +86,7 @@ fn derive_direction(
     }
     let wan_out = iface_out.map(|i| ctx.wan_interfaces.contains(i)).unwrap_or(false);
     if let Some(s) = src_ip {
-        if ctx.wan_ips.contains(s) && !wan_out { return Some(Direction::Local); }
+        if ctx.wan_ips.load().contains(s) && !wan_out { return Some(Direction::Local); }
     }
     if let Some(r) = rule_name {
         if r.contains("DNAT") || r.contains("PREROUTING") { return Some(Direction::Nat); }
@@ -148,7 +165,7 @@ mod tests {
     fn ctx() -> FirewallCtx {
         FirewallCtx {
             wan_interfaces: HashSet::from(["ppp0".to_string()]),
-            wan_ips: HashSet::new(),
+            wan_ips: Default::default(),
         }
     }
 

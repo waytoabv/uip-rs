@@ -56,11 +56,21 @@ pub async fn get_status(State(pool): State<PgPool>) -> Result<Json<Value>, ApiEr
         "last": config(&pool, "pihole_status").await,
     });
 
+    let unifi = json!({
+        "enabled": config(&pool, "unifi_enabled").await.and_then(|v| v.as_bool()).unwrap_or(false),
+        "last": config(&pool, "unifi_status").await,
+    });
+
     Ok(Json(json!({
         // Vom Anreicherungs-Worker geschrieben; `null`, solange es keine
         // Antwort von AbuseIPDB gab, aus der ein Kontingent hervorginge.
         "abuseipdb": config(&pool, "abuseipdb_quota").await,
         "pihole": pihole,
+        "unifi": unifi,
+        // Der Empfänger zählt, was ankommt. Das ist die einzige belastbare
+        // Aussage darüber, ob das Gateway seine Meldungen wirklich hierher
+        // schickt — und sie kostet keine einzige gespeicherte Zeile.
+        "syslog": config(&pool, "syslog_stats").await,
         "maxmind": {
             "last_update": city.max(asn).map(|t| t.to_rfc3339()),
             "city": city.map(|t| t.to_rfc3339()),

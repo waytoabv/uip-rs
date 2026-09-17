@@ -18,8 +18,8 @@ use crate::error::ApiError;
 /// Schlüssel wäre dort eine stumme Fehlfunktion statt eines Fehlers.
 const ALLOWED: &[(&str, Kind)] = &[
     ("wan_ips", Kind::Text),
-    ("gateway_ips", Kind::Text),
     ("rdns_enabled", Kind::Bool),
+    ("drop_syslog_traffic", Kind::Bool),
     ("abuseipdb_api_key", Kind::Secret),
     ("geoip_dir", Kind::Text),
     ("maxmind_account_id", Kind::Text),
@@ -34,6 +34,12 @@ const ALLOWED: &[(&str, Kind)] = &[
     ("retention_days", Kind::Number),
     ("retention_days_dns", Kind::Number),
 ];
+
+/// Schlüssel, die der Dialog lesen darf, aber niemand schreiben kann: sie
+/// stammen aus dem Betrieb, nicht aus einer Eingabe. Sie stehen bewusst nicht
+/// in `ALLOWED` — dort hinein bedeutete „darf gesetzt werden", und eine von
+/// Hand gesetzte „erkannte" Adresse wäre ein Widerspruch in sich.
+const READ_ONLY: &[&str] = &["wan_ips_detected"];
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -66,7 +72,11 @@ pub async fn get_settings(State(pool): State<PgPool>) -> Result<Json<Value>, Api
                 out.insert(key, value);
             }
             // Unbekannte Schlüssel (etwa das Kontingent von AbuseIPDB, das
-            // der Worker selbst pflegt) bleiben außen vor.
+            // der Worker selbst pflegt) bleiben außen vor — bis auf die
+            // wenigen, die der Dialog anzeigt, ohne sie je zu schreiben.
+            None if READ_ONLY.contains(&key.as_str()) => {
+                out.insert(key, value);
+            }
             None => {}
         }
     }

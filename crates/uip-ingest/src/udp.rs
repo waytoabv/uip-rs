@@ -1,3 +1,4 @@
+use crate::collector::Collector;
 use crate::firewall::FirewallCtx;
 use crate::parsers::parse_log;
 use chrono::Utc;
@@ -6,13 +7,20 @@ use tokio::sync::mpsc;
 use uip_core::types::LogType;
 use uip_core::ParsedLog;
 
-pub async fn run_udp(sock: UdpSocket, tx: mpsc::Sender<ParsedLog>, ctx: FirewallCtx) {
+pub async fn run_udp(
+    sock: UdpSocket,
+    tx: mpsc::Sender<ParsedLog>,
+    ctx: FirewallCtx,
+    collector: Collector,
+) {
     let mut buf = vec![0u8; 65536];
     let mut dropped: u64 = 0;
     loop {
-        let Ok((n, _peer)) = sock.recv_from(&mut buf).await else {
+        let Ok((n, peer)) = sock.recv_from(&mut buf).await else {
             continue;
         };
+        collector.count_received();
+        collector.learn_local_address(peer);
         let line = String::from_utf8_lossy(&buf[..n]);
         let line = line.trim_end_matches(['\r', '\n', '\0']);
         if line.is_empty() {
@@ -24,6 +32,11 @@ pub async fn run_udp(sock: UdpSocket, tx: mpsc::Sender<ParsedLog>, ctx: Firewall
             raw_log: line.to_string(),
             ..Default::default()
         });
+        // Der eigene Transportweg beschreibt sich sonst selbst, Zeile für
+        // Zeile — der lauteste Absender im ganzen Log, ohne Aussage.
+        if collector.should_drop(&parsed) {
+            continue;
+        }
         if tx.try_send(parsed).is_err() {
             dropped += 1;
             if dropped.is_power_of_two() {
@@ -44,7 +57,7 @@ mod tests {
         let sock = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let addr = sock.local_addr().unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
-        tokio::spawn(run_udp(sock, tx, FirewallCtx::default()));
+        tokio::spawn(run_udp(sock, tx, FirewallCtx::default(), Collector::new(514)));
 
         let client = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         client.send_to(b"Feb  8 16:43:49 UDR dnsmasq[1]: query[A] example.com from 192.168.1.5", addr).await.unwrap();

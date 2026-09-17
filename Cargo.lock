@@ -2585,6 +2585,7 @@ name = "uip"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "axum",
  "sqlx",
  "tokio",
@@ -2664,6 +2665,7 @@ name = "uip-ingest"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "chrono",
  "ipnetwork 0.20.0",
  "mac_address",

@@ -37,9 +37,24 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(addr = %cfg.syslog_addr, "syslog listener up");
     let fw_ctx = FirewallCtx {
         wan_interfaces: cfg.wan_interfaces.clone(),
-        wan_ips: settings.wan_ips.clone(),
+        wan_ips: std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(settings.wan_ips.clone())),
     };
-    tokio::spawn(uip_ingest::udp::run_udp(udp_sock, log_tx, fw_ctx));
+    // Der Empfänger zählt, was ankommt, und verwirft die Firewall-Zeilen über
+    // den eigenen Weg. Der Port stammt aus derselben Adresse, auf der gelauscht
+    // wird — zwei Stellen dafür liefen unweigerlich auseinander.
+    let syslog_port = cfg
+        .syslog_addr
+        .rsplit(':')
+        .next()
+        .and_then(|p| p.parse::<i32>().ok())
+        .unwrap_or(514);
+    let collector = uip_ingest::collector::Collector::new(syslog_port);
+    tokio::spawn(uip_ingest::collector::run_bookkeeping(
+        collector.clone(),
+        fw_ctx.clone(),
+        pool.clone(),
+    ));
+    tokio::spawn(uip_ingest::udp::run_udp(udp_sock, log_tx, fw_ctx, collector));
 
     // GeoIP: fehlende oder veraltete mmdb-Dateien sind kein Fehler, nur leere
     // Anreicherung. Der Watcher bemerkt neue Dateien an ihrer mtime,

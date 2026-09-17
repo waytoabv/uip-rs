@@ -110,6 +110,7 @@ impl Unifi {
             Ok(networks) => store_networks(pool, &networks, &devices).await,
             Err(e) => tracing::debug!(error = %e, "could not read the network configuration"),
         }
+        store_wan_addresses(pool, &devices).await;
 
         let mut n_clients = 0;
         for c in &clients {
@@ -220,6 +221,30 @@ async fn store_networks(pool: &PgPool, networks: &[Value], devices: &[Value]) {
     }
 }
 
+/// Die eigenen WAN-Adressen, wie das Gateway sie meldet.
+///
+/// Sie stand bisher als Pflichtfeld in den Einstellungen — eine Angabe, die
+/// jeder von Hand nachtragen musste und die sich bei einer dynamischen
+/// Adresse hinter seinem Rücken änderte. Das Gerät kennt sie, also fragen wir
+/// es. Getrennt von der eingetippten Fassung abgelegt, damit eine bewusste
+/// Angabe nicht bei jedem Abgleich überschrieben wird.
+async fn store_wan_addresses(pool: &PgPool, devices: &[Value]) {
+    let mut found: Vec<String> = Vec::new();
+    for device in devices {
+        for key in ["wan1", "wan2"] {
+            if let Some(ip) = device.get(key).and_then(|w| text(w, "ip")) {
+                if ip.parse::<std::net::IpAddr>().is_ok() && !found.contains(&ip) {
+                    found.push(ip);
+                }
+            }
+        }
+    }
+    if found.is_empty() {
+        return;
+    }
+    uip_core::settings::put_config(pool, "wan_ips_detected", found.join(",").into()).await;
+}
+
 async fn upsert_network(pool: &PgPool, iface: &str, name: &str, vlan: Option<i32>, purpose: Option<&str>) {
     let res = sqlx::query(
         "INSERT INTO unifi_networks (interface, name, vlan, purpose, updated_at)
@@ -297,6 +322,23 @@ async fn store_device(pool: &PgPool, d: &Value) -> bool {
 
 /// Dauerläufer: alle fünf Minuten abgleichen. Gerätenamen ändern sich selten,
 /// und ein Controller ist kein Dienst, den man im Sekundentakt befragen sollte.
+/// Hält fest, wie der letzte Abgleich ausging — zugleich Herzschlag, damit
+/// eine stehengebliebene Schleife von einer stillen zu unterscheiden ist.
+async fn record(pool: &PgPool, ok: bool, error: Option<String>, counts: Option<(usize, usize)>) {
+    uip_core::settings::put_config(
+        pool,
+        "unifi_status",
+        serde_json::json!({
+            "ok": ok,
+            "at": chrono::Utc::now().to_rfc3339(),
+            "error": error,
+            "clients": counts.map(|c| c.0),
+            "devices": counts.map(|c| c.1),
+        }),
+    )
+    .await;
+}
+
 /// Controller, Schlüssel und Standort, wie sie gerade eingestellt sind.
 async fn config(pool: &PgPool) -> Option<(String, String, String)> {
     let enabled = uip_core::settings::get_config(pool, "unifi_enabled")
@@ -331,8 +373,14 @@ pub async fn run_unifi(pool: PgPool) {
         let client = &current.as_ref().expect("gerade gesetzt").1;
 
         match client.sync(&pool).await {
-            Ok((c, d)) => tracing::info!(clients = c, devices = d, "synced unifi inventory"),
-            Err(e) => tracing::warn!(error = %e, "unifi sync failed"),
+            Ok((c, d)) => {
+                tracing::info!(clients = c, devices = d, "synced unifi inventory");
+                record(&pool, true, None, Some((c, d))).await;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "unifi sync failed");
+                record(&pool, false, Some(e), None).await;
+            }
         }
         tokio::time::sleep(SYNC_EVERY).await;
     }
