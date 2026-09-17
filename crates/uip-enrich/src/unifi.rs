@@ -102,6 +102,15 @@ impl Unifi {
     pub async fn sync(&self, pool: &PgPool) -> Result<(usize, usize), String> {
         let clients = self.get("stat/sta").await?;
         let devices = self.get("stat/device").await?;
+        // `stat/sta` kennt nur, was gerade verbunden ist. Ein Gerät, das einen
+        // Namen im Controller trägt und gerade schläft, stünde damit nie im
+        // Log. `stat/alluser` kennt alle je gesehenen, mit `last_ip` statt
+        // `ip` und ohne die reicheren Felder — deshalb zuerst geschrieben,
+        // damit ein aktiver Eintrag darüber gewinnt.
+        let known = self.get("stat/alluser").await.unwrap_or_else(|e| {
+            tracing::debug!(error = %e, "no historical client list");
+            Vec::new()
+        });
 
         // Die Netz-Konfiguration ist die Nebensache, nicht der Zweck des
         // Abgleichs: fehlt sie, bleiben die Schnittstellen eben bei ihren
@@ -113,7 +122,12 @@ impl Unifi {
         store_wan_addresses(pool, &devices).await;
 
         let mut n_clients = 0;
-        for c in &clients {
+        // Nach `last_seen` aufsteigend: wer eine Adresse zuletzt hatte, wird
+        // zuletzt geschrieben und behält sie (siehe `store_client`).
+        for c in by_last_seen(&known) {
+            store_client(pool, c).await;
+        }
+        for c in by_last_seen(&clients) {
             if store_client(pool, c).await {
                 n_clients += 1;
             }
@@ -287,8 +301,30 @@ pub fn display_name(v: &Value) -> Option<String> {
     text(v, "name").or_else(|| text(v, "hostname")).or_else(|| text(v, "oui"))
 }
 
+/// Dieselben Einträge, älteste zuerst.
+fn by_last_seen(clients: &[Value]) -> Vec<&Value> {
+    let mut out: Vec<&Value> = clients.iter().collect();
+    out.sort_by_key(|c| c.get("last_seen").and_then(|v| v.as_f64()).unwrap_or(0.0) as i64);
+    out
+}
+
 async fn store_client(pool: &PgPool, c: &Value) -> bool {
     let Some(mac) = text(c, "mac") else { return false };
+    // `stat/alluser` nennt die Adresse `last_ip`.
+    let ip = text(c, "ip").or_else(|| text(c, "last_ip"));
+
+    // Eine Adresse gehört immer nur einem Gerät. Ohne das trüge ein alter
+    // Eintrag, dessen Adresse die DHCP-Vergabe inzwischen weitergereicht hat,
+    // seinen Namen an fremden Verkehr — und schlimmer: der Join beim Lesen
+    // fände zwei Zeilen und zeigte jede Log-Zeile doppelt.
+    if let Some(ip) = &ip {
+        let _ = sqlx::query("UPDATE unifi_clients SET ip = NULL WHERE ip = $1::text::inet AND mac <> $2::text::macaddr")
+            .bind(ip)
+            .bind(mac.to_lowercase())
+            .execute(pool)
+            .await;
+    }
+
     let res = sqlx::query(
         "INSERT INTO unifi_clients (mac, ip, name, hostname, oui, network, is_wired, last_seen, updated_at)
          VALUES ($1::text::macaddr, $2::text::inet, $3, $4, $5, $6, $7, to_timestamp($8), NOW())
@@ -298,7 +334,7 @@ async fn store_client(pool: &PgPool, c: &Value) -> bool {
             last_seen = EXCLUDED.last_seen, updated_at = NOW()",
     )
     .bind(mac.to_lowercase())
-    .bind(text(c, "ip"))
+    .bind(ip)
     .bind(text(c, "name"))
     .bind(text(c, "hostname"))
     .bind(text(c, "oui"))
@@ -435,6 +471,62 @@ mod tests {
             None
         );
         assert_eq!(bridge_for(&json!({"purpose": "remote-user-vpn", "name": "VPN"})), None);
+    }
+
+    /// Eine Adresse gehört immer nur einem Gerät. Reicht DHCP sie weiter,
+    /// muss der alte Eintrag sie abgeben — sonst fände der Join beim Lesen
+    /// zwei Zeilen und zeigte jede Log-Zeile doppelt.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn an_address_belongs_to_one_client_at_a_time(pool: sqlx::PgPool) {
+        let old = json!({"mac": "aa:bb:cc:dd:ee:01", "last_ip": "10.0.0.5",
+                         "name": "Alter Drucker", "last_seen": 1_700_000_000.0});
+        let new = json!({"mac": "aa:bb:cc:dd:ee:02", "ip": "10.0.0.5",
+                         "name": "Neues Notebook", "last_seen": 1_800_000_000.0});
+
+        let both = [old, new];
+        for c in by_last_seen(&both) {
+            assert!(store_client(&pool, c).await);
+        }
+
+        let holders: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT name, host(ip) FROM unifi_clients ORDER BY name",
+        )
+        .fetch_all(&pool).await.unwrap();
+        assert_eq!(
+            holders,
+            [("Alter Drucker".to_string(), None), ("Neues Notebook".to_string(), Some("10.0.0.5".into()))],
+            "der zuletzt gesehene behält die Adresse, der andere gibt sie ab"
+        );
+    }
+
+    /// `stat/alluser` nennt die Adresse `last_ip`. Nur nach `ip` zu greifen
+    /// hieße, dass jedes gerade nicht verbundene Gerät namenlos bleibt — und
+    /// das sind die meisten, wenn man abends ins Log schaut.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_historical_client_is_stored_under_its_last_address(pool: sqlx::PgPool) {
+        let sleeping = json!({"mac": "aa:bb:cc:dd:ee:03", "last_ip": "10.0.0.9",
+                              "hostname": "nas", "last_seen": 1_700_000_000.0});
+        assert!(store_client(&pool, &sleeping).await);
+
+        let (host, ip): (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT hostname, host(ip) FROM unifi_clients")
+                .fetch_one(&pool).await.unwrap();
+        assert_eq!((host.as_deref(), ip.as_deref()), (Some("nas"), Some("10.0.0.9")));
+    }
+
+    /// Ältester zuerst — sonst entscheidet die Reihenfolge der Antwort, wer
+    /// eine geteilte Adresse behält.
+    #[test]
+    fn clients_are_written_oldest_first() {
+        let a = json!({"mac": "a", "last_seen": 300.0});
+        let b = json!({"mac": "b", "last_seen": 100.0});
+        let c = json!({"mac": "c"}); // ohne Angabe: ganz nach vorn
+        let all = [a, b, c];
+        let order: Vec<&str> = by_last_seen(&all)
+            .iter()
+            .map(|v| v.get("mac").unwrap().as_str().unwrap())
+            .collect();
+        assert_eq!(order, ["c", "b", "a"]);
     }
 
     /// Ein vollständiger Satz, wie ihn ein echtes Gateway liefert — die Formen
