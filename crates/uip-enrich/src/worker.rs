@@ -1,4 +1,4 @@
-use crate::target::remote_ip;
+use uip_core::remote_ip;
 use crate::types::{GeoSource, IpFacts, Quota, RdnsSource, ThreatOutcome, ThreatSource};
 use chrono::{DateTime, Utc};
 use ipnetwork::IpNetwork;

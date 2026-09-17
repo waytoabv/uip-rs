@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
 use ipnetwork::IpNetwork;
 use mac_address::MacAddress;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row as _};
+use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,7 +35,7 @@ struct Row {
     dhcp_event: Option<String>,
     wifi_event: Option<String>,
     raw_log: Option<String>,
-    live: Arc<LiveRow>,
+    live: LiveRow,
 }
 
 async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row, sqlx::Error> {
@@ -63,11 +65,10 @@ async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row
     // System-Logs tragen raw immer (einzige Information); andere nur zur Diagnose nicht nötig → NULL spart Platz.
     let keep_raw = matches!(log_type, uip_core::types::LogType::System);
 
-    // Bewusst ohne geo_*/asn_*/rdns/threat_*: eine frisch geschriebene Zeile ist
-    // noch gar nicht angereichert (enrich_status = 0). Die Live-Tabelle zeigt
-    // sie hier leer und holt sie beim nächsten /api/logs-Reload nach — ehrlicher
-    // als ein Wert, den es zum Sendezeitpunkt noch nicht gab.
-    let live = Arc::new(LiveRow {
+    // Die angereicherten Felder bleiben hier leer und werden erst in `flush`
+    // aus dem Adress-Cache gefüllt — dort liegt die ganze Stapel-Menge vor,
+    // und eine Abfrage für den Stapel ist billiger als eine je Zeile.
+    let live = LiveRow {
         timestamp,
         log_type: log_type.as_str(),
         direction: p.direction.map(|d| d.as_str()),
@@ -88,7 +89,17 @@ async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row
         dhcp_event: p.dhcp_event.clone(),
         wifi_event: p.wifi_event.clone(),
         raw_log: keep_raw.then(|| p.raw_log.clone()),
-    });
+        geo_country: None,
+        geo_city: None,
+        geo_lat: None,
+        geo_lon: None,
+        asn_number: None,
+        asn_name: None,
+        rdns: None,
+        threat_score: None,
+        threat_categories: None,
+        abuse_is_tor: None,
+    };
 
     Ok(Row {
         timestamp,
@@ -116,6 +127,94 @@ async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row
         raw_log: keep_raw.then_some(p.raw_log),
         live,
     })
+}
+
+/// Was über die Gegenstellen dieses Stapels schon bekannt ist.
+///
+/// Gefragt wird nach beiden Seiten jeder Zeile; im Cache steht ohnehin nur die
+/// Gegenstelle, weil nur sie je nachgeschlagen wird. Eine Abfrage je Stapel
+/// statt je Zeile — bei zweihundert Zeilen ist das der Unterschied zwischen
+/// einer Abfrage und zweihundert.
+async fn known_facts(pool: &PgPool, rows: &[Row]) -> HashMap<IpAddr, uip_core::Enrichment> {
+    let mut wanted: Vec<IpNetwork> = Vec::new();
+    for r in rows {
+        for ip in [r.src_ip, r.dst_ip].into_iter().flatten() {
+            if !wanted.contains(&ip) {
+                wanted.push(ip);
+            }
+        }
+    }
+    if wanted.is_empty() {
+        return HashMap::new();
+    }
+
+    let found = sqlx::query(
+        r#"SELECT host(ip) AS ip, geo_country, geo_city, geo_lat, geo_lon,
+                  asn_number, asn_name, rdns, threat_score, threat_categories, abuse_is_tor
+           FROM ip_enrichment WHERE ip = ANY($1)"#,
+    )
+    .bind(&wanted)
+    .fetch_all(pool)
+    .await;
+    let found = match found {
+        Ok(rows) => rows,
+        // Kein Grund, den Stapel scheitern zu lassen: ohne Cache-Treffer
+        // erscheint die Zeile eben leer und wird nachgetragen.
+        Err(e) => {
+            tracing::debug!(error = %e, "could not read the address cache");
+            return HashMap::new();
+        }
+    };
+
+    found
+        .iter()
+        .filter_map(|r| {
+            let ip: String = r.get("ip");
+            let ip: IpAddr = ip.parse().ok()?;
+            Some((
+                ip,
+                uip_core::Enrichment {
+                    ip,
+                    geo_country: r.get("geo_country"),
+                    geo_city: r.get("geo_city"),
+                    geo_lat: r.get("geo_lat"),
+                    geo_lon: r.get("geo_lon"),
+                    asn_number: r.get("asn_number"),
+                    asn_name: r.get("asn_name"),
+                    rdns: r.get("rdns"),
+                    threat_score: r.get("threat_score"),
+                    threat_categories: r.get("threat_categories"),
+                    abuse_is_tor: r.get("abuse_is_tor"),
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Trägt die bekannten Angaben in die Live-Zeile ein.
+///
+/// Welche der beiden Adressen die Gegenstelle ist, entscheidet dieselbe
+/// Funktion wie in der Anreicherung (`uip_core::remote_ip`) — zwei Antworten
+/// darauf liefen unweigerlich auseinander.
+fn fill_from_cache(r: &mut Row, known: &HashMap<IpAddr, uip_core::Enrichment>) {
+    let remote = uip_core::remote_ip(
+        r.log_type_id,
+        r.direction_id,
+        r.src_ip.map(|n| n.ip()),
+        r.dst_ip.map(|n| n.ip()),
+        &HashSet::new(),
+    );
+    let Some(facts) = remote.and_then(|ip| known.get(&ip)) else { return };
+    r.live.geo_country = facts.geo_country.clone();
+    r.live.geo_city = facts.geo_city.clone();
+    r.live.geo_lat = facts.geo_lat;
+    r.live.geo_lon = facts.geo_lon;
+    r.live.asn_number = facts.asn_number;
+    r.live.asn_name = facts.asn_name.clone();
+    r.live.rdns = facts.rdns.clone();
+    r.live.threat_score = facts.threat_score;
+    r.live.threat_categories = facts.threat_categories.clone();
+    r.live.abuse_is_tor = facts.abuse_is_tor;
 }
 
 async fn flush(
@@ -168,8 +267,14 @@ async fn flush(
     .await;
     match res {
         Ok(_) => {
-            for r in rows.drain(..) {
-                let _ = events.send(uip_core::LiveEvent::Row(r.live)); // niemand hört zu → egal
+            // Was über die Gegenstelle schon bekannt ist, kommt mit — die
+            // Zeile soll nicht erst leer erscheinen und Sekunden später
+            // nachgebessert werden, wenn die Antwort längst im Cache liegt.
+            // Eine Abfrage für den ganzen Stapel, nicht eine je Zeile.
+            let known = known_facts(pool, rows).await;
+            for mut r in rows.drain(..) {
+                fill_from_cache(&mut r, &known);
+                let _ = events.send(uip_core::LiveEvent::Row(Arc::new(r.live))); // niemand hört zu → egal
             }
             tracing::debug!(rows = n, "flushed batch");
             // Weckt den Enrichment-Worker: es gibt jetzt frische Zeilen mit
@@ -246,5 +351,72 @@ mod tests {
         let evt = brx.recv().await.unwrap();
         let uip_core::LiveEvent::Row(evt) = evt else { panic!("eine Zeile, kein Nachtrag") };
         assert_eq!(evt.src_ip, Some("1.2.3.4".parse().unwrap()));
+        // Die Adresse war unbekannt — dann bleibt es beim Nachtrag später.
+        assert_eq!(evt.geo_country, None);
+    }
+
+    /// Dieselben Ziele kehren ständig wieder. Ist die Gegenstelle schon
+    /// nachgeschlagen, soll die Zeile vollständig erscheinen und nicht erst
+    /// leer und Sekunden später nachgebessert — die Antwort liegt ja bereit.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_known_address_arrives_already_enriched(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO ip_enrichment (ip, geo_country, asn_number, asn_name, rdns)
+             VALUES ('1.2.3.4', 'DE', 3320, 'Deutsche Telekom AG', 'host.example.')",
+        )
+        .execute(&pool).await.unwrap();
+
+        let cache = std::sync::Arc::new(LookupCache::new());
+        let (tx, rx) = tokio::sync::mpsc::channel(1024);
+        let (btx, mut brx) = tokio::sync::broadcast::channel(256);
+        let wake = std::sync::Arc::new(tokio::sync::Notify::new());
+        let writer = tokio::spawn(run_writer(rx, pool.clone(), cache, btx, wake));
+
+        let ctx = FirewallCtx::default();
+        ctx.set_wan_interfaces(["ppp0".to_string()].into_iter().collect());
+        let p = parse_log(
+            "Feb  8 16:43:49 UDR kernel: [WAN_IN-D]IN=ppp0 OUT=br20 SRC=1.2.3.4 DST=10.0.0.5 PROTO=TCP SPT=1 DPT=443",
+            Utc::now(), &ctx,
+        ).unwrap();
+        tx.send(p).await.unwrap();
+        drop(tx);
+        writer.await.unwrap();
+
+        let uip_core::LiveEvent::Row(evt) = brx.recv().await.unwrap() else {
+            panic!("eine Zeile, kein Nachtrag")
+        };
+        assert_eq!(evt.geo_country.as_deref(), Some("DE"));
+        assert_eq!(evt.asn_name.as_deref(), Some("Deutsche Telekom AG"));
+        assert_eq!(evt.rdns.as_deref(), Some("host.example."));
+    }
+
+    /// Die eigene Seite wird nicht beschriftet: im Cache steht nur die
+    /// Gegenstelle, und 10.0.0.5 dort zu suchen fände nichts — oder, schlimmer,
+    /// die Angaben eines fremden Netzes mit derselben Adresse.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn the_local_side_is_never_labelled(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO ip_enrichment (ip, geo_country) VALUES ('10.0.0.5', 'XX')")
+            .execute(&pool).await.unwrap();
+
+        let cache = std::sync::Arc::new(LookupCache::new());
+        let (tx, rx) = tokio::sync::mpsc::channel(1024);
+        let (btx, mut brx) = tokio::sync::broadcast::channel(256);
+        let wake = std::sync::Arc::new(tokio::sync::Notify::new());
+        let writer = tokio::spawn(run_writer(rx, pool.clone(), cache, btx, wake));
+
+        let ctx = FirewallCtx::default();
+        ctx.set_wan_interfaces(["ppp0".to_string()].into_iter().collect());
+        let p = parse_log(
+            "Feb  8 16:43:49 UDR kernel: [WAN_IN-D]IN=ppp0 OUT=br20 SRC=1.2.3.4 DST=10.0.0.5 PROTO=TCP SPT=1 DPT=443",
+            Utc::now(), &ctx,
+        ).unwrap();
+        tx.send(p).await.unwrap();
+        drop(tx);
+        writer.await.unwrap();
+
+        let uip_core::LiveEvent::Row(evt) = brx.recv().await.unwrap() else {
+            panic!("eine Zeile, kein Nachtrag")
+        };
+        assert_eq!(evt.geo_country, None, "die eigene Adresse zählt nicht");
     }
 }

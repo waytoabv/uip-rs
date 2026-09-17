@@ -3,8 +3,11 @@ use serde::Serialize;
 use std::net::IpAddr;
 
 /// Eine gerade geschriebene Zeile, wie sie an offene Streams geht.
-/// Angereicherte Felder fehlen absichtlich: zu diesem Zeitpunkt gibt es sie
-/// noch nicht.
+///
+/// Die angereicherten Felder sind gefüllt, wenn die Gegenstelle schon einmal
+/// nachgeschlagen wurde — und das ist der Regelfall, denn dieselben Ziele
+/// kommen immer wieder. Nur eine wirklich neue Adresse erscheint zunächst
+/// ohne; die trägt der Worker anschließend als `Enrichment` nach.
 #[derive(Debug, Clone, Serialize)]
 pub struct LiveRow {
     pub timestamp: DateTime<Utc>,
@@ -27,6 +30,18 @@ pub struct LiveRow {
     pub dhcp_event: Option<String>,
     pub wifi_event: Option<String>,
     pub raw_log: Option<String>,
+
+    // Aus dem Adress-Cache, sofern die Gegenstelle bekannt ist.
+    pub geo_country: Option<String>,
+    pub geo_city: Option<String>,
+    pub geo_lat: Option<f64>,
+    pub geo_lon: Option<f64>,
+    pub asn_number: Option<i32>,
+    pub asn_name: Option<String>,
+    pub rdns: Option<String>,
+    pub threat_score: Option<i32>,
+    pub threat_categories: Option<Vec<String>>,
+    pub abuse_is_tor: Option<bool>,
 }
 
 /// Was die Anreicherung über eine Adresse herausgefunden hat.

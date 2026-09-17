@@ -86,14 +86,37 @@ fn port_verdict(port: Option<i32>, src: Option<i32>, dst: Option<i32>) -> Verdic
     }
 }
 
-/// `country`/`threat_min` fragen nach Spalten, die eine frisch geschriebene
-/// Zeile noch nicht hat.
-fn enriched_verdict(f: &LogFilter) -> Verdict {
-    if !f.country.is_empty() || f.threat_min.is_some() {
-        Verdict::Unknowable
-    } else {
-        Verdict::Pass
-    }
+/// `country`/`threat_min` fragen nach Spalten, die eine Zeile nur trägt, wenn
+/// ihre Gegenstelle schon einmal nachgeschlagen wurde.
+fn enriched_verdict(f: &LogFilter, row: &LiveRow) -> Verdict {
+    let country = match (&f.country[..], &row.geo_country) {
+        ([], _) => Verdict::Pass,
+        // Der Writer legt bei, was über die Gegenstelle schon bekannt ist —
+        // und das ist der Regelfall, weil dieselben Ziele wiederkehren. Dann
+        // lässt sich die Frage beantworten, statt den Strom anzuhalten.
+        (wanted, Some(have)) => {
+            if wanted.iter().any(|c| c.eq_ignore_ascii_case(have)) {
+                Verdict::Pass
+            } else {
+                Verdict::Reject
+            }
+        }
+        // Eine Adresse, die noch nie jemand nachgeschlagen hat: hier wissen
+        // wir es wirklich nicht.
+        (_, None) => Verdict::Unknowable,
+    };
+    let threat = match (f.threat_min, row.threat_score) {
+        (None, _) => Verdict::Pass,
+        (Some(min), Some(score)) => {
+            if score >= min {
+                Verdict::Pass
+            } else {
+                Verdict::Reject
+            }
+        }
+        (Some(_), None) => Verdict::Unknowable,
+    };
+    combine([country, threat])
 }
 
 fn glob_match(haystack: &str, pattern: &str) -> bool {
@@ -258,7 +281,7 @@ pub fn matches_live(row: &LiveRow, f: &LogFilter) -> Verdict {
         exact_iface_verdict(f.iface_out.as_deref(), row.iface_out.as_deref()),
         list_verdict(&f.proto, row.protocol.as_deref()),
         port_verdict(f.port, row.src_port, row.dst_port),
-        enriched_verdict(f),
+        enriched_verdict(f, row),
         search_verdict(row, f.q.as_deref()),
     ])
 }
@@ -308,6 +331,32 @@ mod tests {
     use chrono::Utc;
     use uip_core::LiveRow;
 
+    /// Eine Zeile, deren Gegenstelle schon bekannt war, kann nach Land und
+    /// Threat gefiltert werden — der Strom muss dafür nicht anhalten.
+    #[test]
+    fn known_facts_answer_the_enriched_filters() {
+        let mut known = row();
+        known.geo_country = Some("DE".into());
+        known.threat_score = Some(80);
+
+        assert_eq!(matches_live(&known, &f("country=DE")), Verdict::Pass);
+        assert_eq!(matches_live(&known, &f("country=US")), Verdict::Reject);
+        assert_eq!(matches_live(&known, &f("threat_min=50")), Verdict::Pass);
+        assert_eq!(matches_live(&known, &f("threat_min=90")), Verdict::Reject);
+
+        // Nur was die Zeile nicht mitbringt, hält den Strom an.
+        let unknown = row();
+        assert_eq!(matches_live(&unknown, &f("country=DE")), Verdict::Unknowable);
+        assert_eq!(matches_live(&unknown, &f("threat_min=50")), Verdict::Unknowable);
+
+        // Und ein sicheres Nein schlägt das Unbekannte: die Zeile fällt so
+        // oder so raus, da muss niemand pausieren.
+        let mut half = row();
+        half.geo_country = Some("US".into());
+        assert_eq!(matches_live(&half, &f("country=US&threat_min=50")), Verdict::Unknowable);
+        assert_eq!(matches_live(&half, &f("country=DE&threat_min=50")), Verdict::Reject);
+    }
+
     fn row() -> LiveRow {
         LiveRow {
             timestamp: Utc::now(),
@@ -324,6 +373,9 @@ mod tests {
             dst_port: Some(443),
             mac_address: None, hostname: None, dns_query: None, dns_type: None,
             dns_answer: None, dhcp_event: None, wifi_event: None, raw_log: None,
+            geo_country: None, geo_city: None, geo_lat: None, geo_lon: None,
+            asn_number: None, asn_name: None, rdns: None, threat_score: None,
+            threat_categories: None, abuse_is_tor: None,
         }
     }
 
