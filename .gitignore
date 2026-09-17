@@ -5,3 +5,9 @@ dist/
 *.mmdb
 !crates/uip-enrich/tests/data/*.mmdb
 .DS_Store
+
+# Zum Ausprobieren installierte Agenten-Skills. Sie gehören nicht ins Repo:
+# 1,4 MB fremde Dateien, die niemand hier pflegt.
+.claude/
+.agents/
+skills-lock.json

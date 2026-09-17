@@ -29,8 +29,8 @@ export function logTypePillClass(logType: string | null | undefined): string {
 }
 
 const ACTION_PILL: Record<string, string> = {
-  allow: 'bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
-  block: 'bg-red-500/10 dark:bg-red-500/20 text-red-600 dark:text-red-400 border-red-500/40',
+  allow: 'bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-800 dark:text-emerald-400 border-emerald-500/30',
+  block: 'bg-red-500/10 dark:bg-red-500/20 text-red-800 dark:text-red-400 border-red-500/40',
   redirect: 'bg-yellow-500/10 dark:bg-yellow-500/15 text-yellow-900 dark:text-yellow-400 border-yellow-500/30',
 };
 

@@ -210,7 +210,7 @@ const FilterBar: Component<Props> = (props) => {
             type="button"
             disabled
             title="Custom date range — not available yet"
-            class="cursor-not-allowed rounded px-2 py-1 text-xs font-medium text-gray-700 dark:text-gray-400 dark:text-gray-600 opacity-50"
+            class="cursor-not-allowed rounded px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 opacity-60"
           >
             Custom
           </button>
@@ -225,7 +225,7 @@ const FilterBar: Component<Props> = (props) => {
         <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           <Show
             when={describe(props.filters).length > 0}
-            fallback={<span class="py-1 text-[11px] text-gray-700 dark:text-gray-400 dark:text-gray-600">No filters</span>}
+            fallback={<span class="py-1 text-[11px] text-gray-600 dark:text-gray-400">No filters</span>}
           >
             <For each={describe(props.filters)}>
               {(chip) => (
@@ -281,7 +281,7 @@ const FilterBar: Component<Props> = (props) => {
               }}
               class="w-full rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-black py-1.5 pl-7 pr-7 text-xs text-gray-700 dark:text-gray-300 placeholder-gray-400 dark:placeholder-gray-500 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
             />
-            <span class="absolute left-2.5 top-1.5 text-xs text-gray-700 dark:text-gray-400 dark:text-gray-600">⌕</span>
+            <span class="absolute left-2.5 top-1.5 text-xs text-gray-600 dark:text-gray-400">⌕</span>
             <Show when={draft()}>
               <button
                 type="button"

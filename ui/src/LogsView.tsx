@@ -160,7 +160,7 @@ function formatDateShort(ts: string): string {
 
 function TypePill(props: { type: string | null }) {
   return (
-    <Show when={props.type} fallback={<span class="text-gray-300 dark:text-gray-700 text-[12px]">—</span>}>
+    <Show when={props.type} fallback={<span class="text-gray-500 dark:text-gray-400 text-[12px]">—</span>}>
       <span
         class={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border ${logTypePillClass(props.type)}`}
       >
@@ -173,7 +173,7 @@ function TypePill(props: { type: string | null }) {
 function ActionPill(props: { action: string | null; dhcpEvent: string | null; wifiEvent: string | null }) {
   const label = () => props.action ?? props.dhcpEvent ?? props.wifiEvent ?? null;
   return (
-    <Show when={label()} fallback={<span class="text-gray-300 dark:text-gray-700 text-[12px]">—</span>}>
+    <Show when={label()} fallback={<span class="text-gray-500 dark:text-gray-400 text-[12px]">—</span>}>
       <span
         class={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border ${actionPillClass(label())}`}
       >
@@ -200,7 +200,7 @@ function AddressCell(props: { ip: string | null; port: number | null; name: stri
   const primary = () => props.name ?? props.ip;
   const detail = () => (props.name ? props.ip : null);
   return (
-    <Show when={props.ip} fallback={<span class="text-gray-300 dark:text-gray-700">—</span>}>
+    <Show when={props.ip} fallback={<span class="text-gray-500 dark:text-gray-400">—</span>}>
       <div class="leading-tight">
         <div class="truncate text-[13px] text-gray-700 dark:text-gray-200" title={primary() ?? undefined}>
           {primary()}
@@ -218,7 +218,7 @@ function AddressCell(props: { ip: string | null; port: number | null; name: stri
 
 function CountryCell(props: { code: string | null }) {
   return (
-    <Show when={props.code} fallback={<span class="text-gray-300 dark:text-gray-700">—</span>}>
+    <Show when={props.code} fallback={<span class="text-gray-500 dark:text-gray-400">—</span>}>
       <span class="inline-flex items-center justify-center" title={countryName(props.code)}>
         <CountryFlag code={props.code} />
       </span>
@@ -228,7 +228,7 @@ function CountryCell(props: { code: string | null }) {
 
 function AsnCell(props: { name: string | null }) {
   return (
-    <Show when={props.name} fallback={<span class="text-gray-300 dark:text-gray-700">—</span>}>
+    <Show when={props.name} fallback={<span class="text-gray-500 dark:text-gray-400">—</span>}>
       <span
         class="text-[12px] text-gray-500 whitespace-nowrap truncate inline-block align-bottom max-w-full"
         title={props.name ?? undefined}
@@ -241,7 +241,7 @@ function AsnCell(props: { name: string | null }) {
 
 function ThreatCell(props: { score: number | null }) {
   return (
-    <Show when={props.score != null} fallback={<span class="text-gray-300 dark:text-gray-700">—</span>}>
+    <Show when={props.score != null} fallback={<span class="text-gray-500 dark:text-gray-400">—</span>}>
       <span class="inline-flex items-center gap-1.5">
         <span class={`w-1.5 h-1.5 rounded-full ${threatDotClass(props.score)}`} />
         <span class="text-gray-600 dark:text-gray-300 text-[13px]">{props.score}</span>
@@ -253,7 +253,7 @@ function ThreatCell(props: { score: number | null }) {
 function CategoriesCell(props: { categories: string[] | null }) {
   const text = () => decodeThreatCategories(props.categories);
   return (
-    <Show when={text()} fallback={<span class="text-gray-300 dark:text-gray-700">—</span>}>
+    <Show when={text()} fallback={<span class="text-gray-500 dark:text-gray-400">—</span>}>
       <span
         class="text-[11px] text-purple-600/70 dark:text-purple-400/70 truncate inline-block align-bottom max-w-full"
         title={text() ?? undefined}
@@ -339,7 +339,7 @@ function Th(props: { key: string; label: string; center?: boolean }) {
     <th
       data-col={props.key}
       style={width() == null ? undefined : { width: `${width()}px` }}
-      class={`relative whitespace-nowrap px-3 py-2 text-[12px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 ${
+      class={`relative whitespace-nowrap px-3 py-2 text-[12px] font-medium uppercase tracking-wider text-gray-600 dark:text-gray-400 ${
         props.center ? 'text-center' : ''
       }`}
     >
@@ -545,7 +545,7 @@ export default function LogsView(props: { query: string }) {
             {paused() ? 'Resume' : isLive() ? 'Live' : 'Paused'}
           </button>
           <Show when={lastUpdate()}>
-            <span class="text-[10px] text-gray-500">Updated {lastUpdate()!.toLocaleTimeString('en-GB')}</span>
+            <span class="text-[10px] text-gray-600 dark:text-gray-400">Updated {lastUpdate()!.toLocaleTimeString('en-GB')}</span>
           </Show>
         </div>
         <div class="flex items-center gap-3">
@@ -678,7 +678,7 @@ export default function LogsView(props: { query: string }) {
                 }
               >
                 <For each={rows()}>
-                  {(row) => {
+                  {(row, i) => {
                     const expanded = () => expandedId() === row.id;
                     const tint = isHighThreat(row.threat_score);
                     return (
@@ -687,7 +687,13 @@ export default function LogsView(props: { query: string }) {
                           onClick={() => setExpandedId((cur) => (cur === row.id ? null : row.id))}
                           class={`log-row cursor-pointer transition-colors hover:bg-gray-100 dark:hover:bg-gray-800/30 ${
                             expanded() ? '' : 'border-b border-gray-200/50 dark:border-gray-800/50'
-                          } ${tint ? 'bg-red-100/60 dark:bg-red-950/10' : ''}`}
+                          } ${
+                            tint
+                              ? 'bg-red-100/60 dark:bg-red-950/10'
+                              : i() % 2
+                                ? 'bg-gray-50/70 dark:bg-white/[0.02]'
+                                : ''
+                          }`}
                         >
                           <td class="px-3 py-1.5" title={row.timestamp}>
                             <div class="text-[13px] font-light text-gray-500 dark:text-gray-400">
@@ -735,14 +741,14 @@ export default function LogsView(props: { query: string }) {
                             {namedNetworkPath(row.iface_in, row.iface_out)}
                           </td>
                           <Show when={showCol('proto')}>
-                            <td class="px-3 py-1.5 text-[12px] text-gray-400 uppercase">{protocolName(row.protocol) ?? '—'}</td>
+                            <td class="px-3 py-1.5 text-[12px] uppercase text-gray-600 dark:text-gray-400">{protocolName(row.protocol) ?? '—'}</td>
                           </Show>
-                          <td class="px-3 py-1.5 text-[12px] text-gray-400">
+                          <td class="px-3 py-1.5 text-[12px] text-gray-600 dark:text-gray-400" title={serviceFor(row)}>
                             {serviceFor(row)}
                           </td>
                           <Show when={showCol('rule')}>
                             <td
-                              class="px-3 py-1.5 text-[12px] text-gray-400"
+                              class="px-3 py-1.5 text-[12px] text-gray-600 dark:text-gray-400"
                               title={infoFor(row)}
                             >
                               {infoFor(row)}

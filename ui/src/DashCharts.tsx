@@ -126,7 +126,7 @@ const ChartAxes: Component<
 };
 
 /** "Traffic over Time": eine Fläche, blauer Verlauf, wie im Original. */
-export const TrafficOverTimeChart: Component<{ points: SeriesPoint[]; bucket: string }> = (props) => {
+export const TrafficOverTimeChart: Component<{ points: SeriesPoint[]; bucket: string; empty?: string }> = (props) => {
   const H = 170;
   const innerH = H - PAD_T - PAD_B;
   const totals = createMemo(() => props.points.map((p) => p.allowed + p.blocked));
@@ -154,7 +154,7 @@ export const TrafficOverTimeChart: Component<{ points: SeriesPoint[]; bucket: st
   return (
     <div class="relative">
       <Show when={props.points.length === 0}>
-        <div class="absolute inset-0 flex items-center justify-center text-xs text-[var(--muted)]">No data</div>
+        <div class="absolute inset-0 flex items-center justify-center text-xs text-[var(--muted)]">{props.empty ?? 'No data'}</div>
       </Show>
       <ChartAxes height={H} maxValue={maxValue()} points={props.points} bucket={props.bucket} onMouseMove={onMove} onMouseLeave={onLeave}>
         <defs>
@@ -183,7 +183,7 @@ export const TrafficOverTimeChart: Component<{ points: SeriesPoint[]; bucket: st
 /** "Traffic by Action": zwei übereinandergelegte Flächen, grün/rot. Die
  * Quelle liefert nur `allowed`/`blocked` — ein dritter ("redirect") Verlauf
  * käme aus keiner echten Zahl, deshalb bleibt er weg statt ihn zu erfinden. */
-export const TrafficByActionChart: Component<{ points: SeriesPoint[]; bucket: string }> = (props) => {
+export const TrafficByActionChart: Component<{ points: SeriesPoint[]; bucket: string; empty?: string }> = (props) => {
   const H = 200;
   const innerH = H - PAD_T - PAD_B;
   const totals = createMemo(() => props.points.map((p) => p.allowed + p.blocked));
@@ -222,7 +222,7 @@ export const TrafficByActionChart: Component<{ points: SeriesPoint[]; bucket: st
   return (
     <div class="relative">
       <Show when={props.points.length === 0}>
-        <div class="absolute inset-0 flex items-center justify-center text-xs text-[var(--muted)]">No data</div>
+        <div class="absolute inset-0 flex items-center justify-center text-xs text-[var(--muted)]">{props.empty ?? 'No data'}</div>
       </Show>
       <ChartAxes height={H} maxValue={maxValue()} points={props.points} bucket={props.bucket} onMouseMove={onMove} onMouseLeave={onLeave}>
         <defs>
