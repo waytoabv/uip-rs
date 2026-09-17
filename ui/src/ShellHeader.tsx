@@ -43,7 +43,8 @@ interface Status {
   } | null;
   pihole: { enabled: boolean; last: { ok: boolean; at: string; error: string | null } | null };
   maxmind: { last_update: string | null; city: string | null; asn: string | null };
-  maxmind_next_update: { from: string; until: string };
+  maxmind_next_update: string | null;
+  maxmind_error: string | null;
 }
 
 async function fetchStatus(): Promise<Status | null> {
@@ -152,7 +153,8 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
   };
   // GeoLite2 erscheint wöchentlich; einen Monat ohne Aktualisierung hat
   // niemand absichtlich.
-  const geoStale = () => (daysSince(status()?.maxmind.last_update) ?? 0) > 30;
+  const geoStale = () =>
+    status()?.maxmind_error != null || (daysSince(status()?.maxmind.last_update) ?? 0) > 30;
 
   onMount(() => {
     fetchTotalLogs().then(setTotalLogs);
@@ -221,9 +223,11 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
           <span
             class={`text-xs ${geoStale() ? 'text-amber-700 dark:text-amber-400' : 'text-gray-600 dark:text-gray-400'}`}
             title={
-              status()?.maxmind.last_update == null
-                ? 'No GeoLite2 database found in the configured directory'
-                : `City: ${stamp(status()?.maxmind.city)} · ASN: ${stamp(status()?.maxmind.asn)}`
+              status()?.maxmind_error != null
+                ? `Last GeoLite2 download failed — ${status()!.maxmind_error}`
+                : status()?.maxmind.last_update == null
+                  ? 'No GeoLite2 database found in the configured directory'
+                  : `City: ${stamp(status()?.maxmind.city)} · ASN: ${stamp(status()?.maxmind.asn)}`
             }
           >
             MaxMind: {stamp(status()?.maxmind.last_update)}
@@ -231,9 +235,13 @@ export default function ShellHeader<View extends string>(props: Props<View>): JS
           <span class="text-xs text-gray-400 dark:text-gray-600">|</span>
           <span
             class="text-xs text-gray-600 dark:text-gray-400"
-            title={`Earliest next GeoLite2 refresh. The timer spreads the start at random over six hours, so it lands between this and ${stamp(status()?.maxmind_next_update.until)}.`}
+            title={
+              status()?.maxmind_next_update == null
+                ? 'No MaxMind credentials — add an account and licence key under Settings'
+                : 'When the GeoLite2 databases are checked for a newer build'
+            }
           >
-            Next pull: {stamp(status()?.maxmind_next_update.from)}
+            Next pull: {stamp(status()?.maxmind_next_update)}
           </span>
           <span class="text-xs text-gray-400 dark:text-gray-600">|</span>
           <span class="text-xs text-gray-600 dark:text-gray-400">{formatCount(totalLogs())}</span>

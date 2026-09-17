@@ -30,8 +30,7 @@ $STD apt install -y \
   libssl-dev \
   git \
   gnupg \
-  ca-certificates \
-  geoipupdate
+  ca-certificates
 msg_ok "Installed Dependencies"
 
 PG_VERSION="17" setup_postgresql
@@ -84,6 +83,8 @@ UIP_SYSLOG_ADDR=0.0.0.0:514
 UIP_WAN_IFACES=ppp0
 UIP_GEOIP_DIR=/var/lib/uip/geoip
 #UIP_ABUSEIPDB_KEY=
+#UIP_MAXMIND_ACCOUNT_ID=${MAXMIND_ACCOUNT_ID:-}
+#UIP_MAXMIND_LICENSE_KEY=${MAXMIND_LICENSE_KEY:-}
 TZ=$(cat /etc/timezone 2>/dev/null || echo Etc/UTC)
 EOF
 chmod 600 /etc/uip/uip.env
@@ -92,24 +93,18 @@ install -m 644 "${SRC_DIR}/lxc/systemd/uip.service" /etc/systemd/system/uip.serv
 systemctl enable -q --now uip
 msg_ok "Created Service"
 
-# Ohne Zugangsdaten bleibt die Karte leer — kein Fehler, nur weniger. Der
-# Timer hält die Datenbanken danach aktuell.
+# GeoIP holt die Anwendung selbst (crates/uip-enrich/src/maxmind.rs), nicht
+# mehr geoipupdate über einen systemd-Timer. Damit lassen sich die Zugangsdaten
+# auch nachträglich im Einstellungs-Dialog setzen — wer sie beim Installieren
+# noch nicht hatte, war vorher ausgesperrt.
 if [[ -n "${MAXMIND_ACCOUNT_ID:-}" && -n "${MAXMIND_LICENSE_KEY:-}" ]]; then
   msg_info "Setup GeoIP"
-  cat <<EOF >/etc/uip/GeoIP.conf
-AccountID ${MAXMIND_ACCOUNT_ID}
-LicenseKey ${MAXMIND_LICENSE_KEY}
-EditionIDs GeoLite2-City GeoLite2-ASN
-EOF
-  chmod 600 /etc/uip/GeoIP.conf
-  install -m 644 "${SRC_DIR}/lxc/systemd/uip-geoip.service" /etc/systemd/system/
-  install -m 644 "${SRC_DIR}/lxc/systemd/uip-geoip.timer" /etc/systemd/system/
-  systemctl enable -q --now uip-geoip.timer
-  # Einmal sofort, sonst bleibt die Karte bis zum ersten Timer-Lauf leer.
-  $STD systemctl start uip-geoip.service || msg_warn "GeoIP download failed — the timer will retry"
+  sed -i "s|^#UIP_MAXMIND_ACCOUNT_ID=.*|UIP_MAXMIND_ACCOUNT_ID=${MAXMIND_ACCOUNT_ID}|" /etc/uip/uip.env
+  sed -i "s|^#UIP_MAXMIND_LICENSE_KEY=.*|UIP_MAXMIND_LICENSE_KEY=${MAXMIND_LICENSE_KEY}|" /etc/uip/uip.env
+  $STD systemctl restart uip
   msg_ok "Setup GeoIP"
 else
-  msg_warn "No MAXMIND_ACCOUNT_ID/MAXMIND_LICENSE_KEY given — GeoIP stays empty. Add /etc/uip/GeoIP.conf and enable uip-geoip.timer later."
+  msg_warn "No MAXMIND_ACCOUNT_ID/MAXMIND_LICENSE_KEY given — country and ASN stay empty. Add them later under Settings; the databases are fetched within the hour."
 fi
 
 motd_ssh

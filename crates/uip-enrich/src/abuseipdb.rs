@@ -5,6 +5,16 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 const API_URL: &str = "https://api.abuseipdb.com/api/v2/check";
+
+/// Der nächste Tageswechsel in UTC — wann AbuseIPDB das Kontingent auffüllt.
+fn next_utc_midnight() -> i64 {
+    (Utc::now() + chrono::Duration::days(1))
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .expect("Mitternacht gibt es")
+        .and_utc()
+        .timestamp()
+}
 const MAX_AGE_DAYS: &str = "90";
 
 pub struct AbuseIpDb {
@@ -48,6 +58,28 @@ impl AbuseIpDb {
     fn paused(&self) -> bool {
         self.paused_until.load(Ordering::Relaxed) > Utc::now().timestamp()
     }
+
+    /// Nach dem Reset ist das Kontingent wieder *unbekannt* — nicht null.
+    ///
+    /// Ohne diesen Schritt blieb `remaining == 0` für immer stehen: die
+    /// Abfrage, aus deren Antwort-Header sich der Zähler erneuert hätte, wurde
+    /// genau wegen der Null nie gestellt. Ein einmal erschöpftes Kontingent
+    /// erholte sich erst durch einen Neustart des Dienstes — auf dem Container
+    /// stand es deshalb seit dem 15. September auf 0, obwohl der Reset
+    /// jede Nacht um Mitternacht UTC läuft.
+    fn clear_after_reset(&self) {
+        let now = Utc::now().timestamp();
+        // Der spätere der beiden Zeitpunkte gilt: `reset_at` ist der Reset des
+        // Tageskontingents, `paused_until` die Ruhe nach einer 429. Ist der
+        // Reset unbekannt (0), zählt allein die Pause.
+        let until = self.reset_at.load(Ordering::Relaxed).max(self.paused_until.load(Ordering::Relaxed));
+        if until != 0 && until <= now {
+            self.remaining.store(-1, Ordering::Relaxed);
+            self.reset_at.store(0, Ordering::Relaxed);
+            self.paused_until.store(0, Ordering::Relaxed);
+            tracing::info!("abuseipdb quota window passed, trying again");
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -72,6 +104,7 @@ impl ThreatSource for AbuseIpDb {
         if !self.enabled() {
             return ThreatOutcome::Disabled;
         }
+        self.clear_after_reset();
         // Kontingent aufgebraucht oder Pause läuft noch: gar nicht erst fragen.
         if self.paused() || self.remaining.load(Ordering::Relaxed) == 0 {
             return ThreatOutcome::QuotaExhausted;
@@ -114,10 +147,20 @@ impl ThreatSource for AbuseIpDb {
         if let Some(n) = header_num("X-RateLimit-Reset") {
             self.reset_at.store(n, Ordering::Relaxed);
         }
+        // Ein leeres Kontingent ohne Reset-Zeitpunkt wäre endgültig: die Null
+        // sperrt jede weitere Abfrage, und nur eine Abfrage könnte sie
+        // aufheben. Die Doku nennt das Kontingent täglich, also ist die
+        // nächste Mitternacht UTC die belegbare Untergrenze.
+        if self.remaining.load(Ordering::Relaxed) == 0 && self.reset_at.load(Ordering::Relaxed) == 0 {
+            self.reset_at.store(next_utc_midnight(), Ordering::Relaxed);
+        }
 
         if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            // Reset-Zeitpunkt, sonst eine Stunde Ruhe.
+            // `X-RateLimit-Reset` ist ein Zeitpunkt, `Retry-After` eine Dauer;
+            // die Doku nennt beide. Der Zeitpunkt zuerst, weil er den Reset des
+            // Tageskontingents benennt statt nur „gleich nochmal".
             let reset = header_num("X-RateLimit-Reset")
+                .or_else(|| header_num("Retry-After").map(|s| Utc::now().timestamp() + s))
                 .unwrap_or_else(|| Utc::now().timestamp() + 3600);
             self.reset_at.store(reset, Ordering::Relaxed);
             self.paused_until.store(reset, Ordering::Relaxed);
@@ -200,6 +243,15 @@ mod tests {
 
     /// Startet einen Stub und liefert seine Basis-URL plus einen Zähler.
     async fn stub(status_code: u16, remaining: &'static str) -> (String, Arc<AtomicUsize>) {
+        stub_with_reset(status_code, remaining, None).await
+    }
+
+    /// Wie `stub`, setzt aber zusätzlich `X-RateLimit-Reset`.
+    async fn stub_with_reset(
+        status_code: u16,
+        remaining: &'static str,
+        reset: Option<i64>,
+    ) -> (String, Arc<AtomicUsize>) {
         let hits = Arc::new(AtomicUsize::new(0));
         let h = hits.clone();
         let app = axum::Router::new().route(
@@ -211,6 +263,9 @@ mod tests {
                     let mut headers = HeaderMap::new();
                     headers.insert("X-RateLimit-Remaining", remaining.parse().unwrap());
                     headers.insert("X-RateLimit-Limit", "1000".parse().unwrap());
+                    if let Some(r) = reset {
+                        headers.insert("X-RateLimit-Reset", r.to_string().parse().unwrap());
+                    }
                     let body = serde_json::json!({"data": {
                         "ipAddress": q.get("ipAddress").cloned().unwrap_or_default(),
                         "abuseConfidenceScore": 42,
@@ -260,6 +315,44 @@ mod tests {
         // Der zweite Aufruf darf den Server gar nicht mehr behelligen.
         assert_eq!(c.lookup("1.1.1.1".parse().unwrap()).await, ThreatOutcome::QuotaExhausted);
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// Der Fall, der den Dienst auf dem Container stillgelegt hat: ist das
+    /// Kontingent einmal auf 0, wird keine Abfrage mehr gestellt — und ohne
+    /// Abfrage erneuert sich der Zähler nie. Nach dem Reset-Zeitpunkt muss er
+    /// wieder auf „unbekannt" stehen und es erneut versuchen.
+    #[tokio::test]
+    async fn a_passed_reset_lets_it_try_again() {
+        let past = Utc::now().timestamp() - 60;
+        let (url, hits) = stub_with_reset(200, "0", Some(past)).await;
+        let c = AbuseIpDb::with_url("key".into(), url);
+
+        assert!(matches!(c.lookup("8.8.8.8".parse().unwrap()).await, ThreatOutcome::Found(_)));
+        assert_eq!(c.quota().map(|q| q.remaining), Some(0), "Kontingent leer");
+
+        // Der Reset liegt hinter uns — die nächste Abfrage geht wieder raus.
+        assert!(matches!(c.lookup("1.1.1.1".parse().unwrap()).await, ThreatOutcome::Found(_)));
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+
+    /// Ohne Reset-Kopfzeile darf ein leeres Kontingent nicht endgültig sein:
+    /// AbuseIPDB füllt es täglich um Mitternacht UTC wieder auf, und darauf
+    /// wartet die Quelle dann eben.
+    #[tokio::test]
+    async fn an_exhausted_quota_without_a_reset_header_waits_for_midnight() {
+        let (url, _) = stub(200, "0").await;
+        let c = AbuseIpDb::with_url("key".into(), url);
+        c.lookup("8.8.8.8".parse().unwrap()).await;
+
+        let reset = c.quota().and_then(|q| (q.reset_at != 0).then_some(q.reset_at));
+        let reset = reset.expect("ein Reset-Zeitpunkt muss gesetzt sein");
+        let midnight = (Utc::now() + chrono::Duration::days(1))
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        assert_eq!(reset, midnight, "die naechste Mitternacht UTC");
     }
 
     #[tokio::test]

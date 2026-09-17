@@ -13,6 +13,10 @@ pub struct Settings {
     pub rdns_enabled: bool,
     pub abuseipdb_key: Option<String>,
     pub geoip_dir: PathBuf,
+    /// Zugangsdaten für MaxMinds Direkt-Download. Beide oder keins — mit nur
+    /// einem der beiden kommt man an keine Datenbank.
+    pub maxmind_account_id: Option<String>,
+    pub maxmind_license_key: Option<String>,
     pub pihole_enabled: bool,
     pub pihole_url: Option<String>,
     pub pihole_password: Option<String>,
@@ -102,6 +106,10 @@ impl Settings {
             text(pool, "abuseipdb_api_key", env("UIP_ABUSEIPDB_KEY"), "").await;
         let geoip_dir =
             text(pool, "geoip_dir", env("UIP_GEOIP_DIR"), "/var/lib/uip/geoip").await;
+        let maxmind_account_id =
+            text(pool, "maxmind_account_id", env("UIP_MAXMIND_ACCOUNT_ID"), "").await;
+        let maxmind_license_key =
+            text(pool, "maxmind_license_key", env("UIP_MAXMIND_LICENSE_KEY"), "").await;
 
         let pihole_enabled = get(pool, "pihole_enabled").await.and_then(|v| v.as_bool()).unwrap_or(false);
         let pihole_url = get(pool, "pihole_url").await.and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty());
@@ -118,6 +126,8 @@ impl Settings {
             rdns_enabled,
             abuseipdb_key: Some(abuseipdb_key).filter(|k| !k.is_empty()),
             geoip_dir: PathBuf::from(geoip_dir),
+            maxmind_account_id: Some(maxmind_account_id).filter(|v| !v.is_empty()),
+            maxmind_license_key: Some(maxmind_license_key).filter(|v| !v.is_empty()),
             pihole_enabled,
             pihole_url,
             pihole_password,

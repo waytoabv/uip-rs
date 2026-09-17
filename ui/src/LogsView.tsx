@@ -223,7 +223,7 @@ function AsnCell(props: { name: string | null }) {
   return (
     <Show when={props.name} fallback={<span class="text-gray-300 dark:text-gray-700">—</span>}>
       <span
-        class="text-[12px] text-gray-500 whitespace-nowrap truncate max-w-[150px] inline-block align-bottom"
+        class="text-[12px] text-gray-500 whitespace-nowrap truncate max-w-[480px] inline-block align-bottom"
         title={props.name ?? undefined}
       >
         {props.name}
@@ -248,7 +248,7 @@ function CategoriesCell(props: { categories: string[] | null }) {
   return (
     <Show when={text()} fallback={<span class="text-gray-300 dark:text-gray-700">—</span>}>
       <span
-        class="text-[11px] text-purple-600/70 dark:text-purple-400/70 truncate max-w-[180px] inline-block align-bottom"
+        class="text-[11px] text-purple-600/70 dark:text-purple-400/70 truncate max-w-[480px] inline-block align-bottom"
         title={text() ?? undefined}
       >
         {text()}
@@ -260,43 +260,7 @@ function CategoriesCell(props: { categories: string[] | null }) {
 
 const WIDTHS_STORAGE_KEY = 'uip-log-column-widths';
 
-/**
- * Die Vorgabebreite je Spalte, in Pixeln.
- *
- * Jede ist mindestens so breit wie ihre eigene Überschrift — `COUNTRY` in 64
- * Pixeln, `ABUSEIPDB` in 80 und `PROTO` in 48 passten nicht und ragten in die
- * Nachbarspalte hinein. An einer Stelle, weil die Summe daraus die Mindest-
- * breite der Tabelle ergibt und beides sonst auseinanderläuft.
- */
-const COLUMN_DEFAULTS: Record<string, number> = {
-  time: 80,
-  type: 96,
-  action: 80,
-  source: 160,
-  destination: 160,
-  country: 80,
-  asn: 144,
-  network: 112,
-  proto: 72,
-  service: 112,
-  rule_info: 192,
-  abuseipdb: 104,
-  categories: 160,
-};
-
-/** Die schmale Spalte mit dem Richtungspfeil — ohne Überschrift, nicht ziehbar. */
-const DIRECTION_COLUMN_WIDTH = 24;
-
-/** Welcher Schalter im „Columns"-Menü welche Spalte ein- und ausblendet. */
-const COLUMN_TOGGLE: Record<string, string> = {
-  country: 'country',
-  asn: 'asn',
-  proto: 'proto',
-  rule_info: 'rule',
-  abuseipdb: 'threat',
-  categories: 'categories',
-};
-
+/** Von Hand gezogene Spaltenbreiten, sofern welche gespeichert sind. */
 function storedWidths(): Record<string, number> {
   try {
     const raw = localStorage.getItem(WIDTHS_STORAGE_KEY);
@@ -310,22 +274,26 @@ function storedWidths(): Record<string, number> {
 const [columnWidths, setColumnWidths] = createSignal<Record<string, number>>(storedWidths());
 
 /**
- * Eine Kopfzelle mit fester, ziehbarer Breite.
+ * Eine Kopfzelle, so breit wie ihr Inhalt — und von Hand verstellbar.
  *
- * Feste Breiten sind hier kein Geschmack, sondern die Reparatur eines echten
- * Ärgernisses: bei automatischer Breite bestimmt der Inhalt die Spalten, und
- * jede neu eintreffende Zeile verschiebt die ganze Tabelle unter dem Zeiger
- * weg. Wer eine Spalte zu schmal findet, zieht sie breiter — die Wahl bleibt
- * über `localStorage` erhalten.
+ * Ohne gesetzte Breite bestimmt der Inhalt die Spalte (`table-auto` plus
+ * `w-max` an der Tabelle), und was nicht ins Fenster passt, wird seitwärts
+ * gescrollt. Der Preis dafür ist Bewegung: trifft über den Live-Stream ein
+ * längerer Wert ein, wächst seine Spalte und schiebt alles rechts davon. Wen
+ * das bei einer bestimmten Spalte stört, der zieht sie auf eine feste Breite —
+ * ab dann gilt die, und sie bleibt über `localStorage` erhalten.
  */
 function Th(props: { key: string; label: string; center?: boolean }) {
-  const width = () => columnWidths()[props.key] ?? COLUMN_DEFAULTS[props.key];
+  const width = () => columnWidths()[props.key];
 
   const startDrag = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     const startX = e.clientX;
-    const startW = width();
+    // Ohne gesetzte Breite ist die gemessene der Ausgangspunkt — sonst spränge
+    // die Spalte beim ersten Ziehen auf einen willkürlichen Wert.
+    const cell = (e.currentTarget as HTMLElement).parentElement as HTMLElement | null;
+    const startW = width() ?? Math.round(cell?.getBoundingClientRect().width ?? 80);
     const onMove = (ev: MouseEvent) => {
       // Unter 40 Pixel ist eine Spalte nicht mehr lesbar, nur noch im Weg.
       const next = Math.max(40, startW + ev.clientX - startX);
@@ -346,8 +314,8 @@ function Th(props: { key: string; label: string; center?: boolean }) {
 
   return (
     <th
-      style={{ width: `${width()}px` }}
-      class={`relative truncate px-2 py-2 text-[12px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 ${
+      style={width() == null ? undefined : { width: `${width()}px` }}
+      class={`relative whitespace-nowrap px-2 py-2 text-[12px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 ${
         props.center ? 'text-center' : ''
       }`}
     >
@@ -387,26 +355,6 @@ export default function LogsView(props: { query: string }) {
 
   const showCol = (key: string) => !hiddenColumns().has(key);
   const visibleColumnCount = () => COLUMN_COUNT - hiddenColumns().size;
-
-  /**
-   * Die Mindestbreite der Tabelle: die Summe der sichtbaren Spalten.
-   *
-   * Mit `table-fixed w-full` sind die Breiten nämlich nur Verhältnisse. Passt
-   * ihre Summe nicht ins Fenster, staucht der Browser alle proportional —
-   * so weit, dass `COUNTRY` in seine Spalte nicht mehr passt und über `ASN`
-   * liegt. Mit einer Mindestbreite gelten die Breiten wieder, und ein zu
-   * schmales Fenster scrollt seitwärts, statt die Tabelle unleserlich zu
-   * quetschen.
-   */
-  const tableMinWidth = () => {
-    const widths = columnWidths();
-    let sum = DIRECTION_COLUMN_WIDTH;
-    for (const key of Object.keys(COLUMN_DEFAULTS)) {
-      const toggle = COLUMN_TOGGLE[key];
-      if (!toggle || showCol(toggle)) sum += widths[key] ?? COLUMN_DEFAULTS[key];
-    }
-    return sum;
-  };
 
   function toggleColumn(key: string) {
     setHiddenColumns((prev) => {
@@ -596,17 +544,18 @@ export default function LogsView(props: { query: string }) {
 
       {/* Tabelle */}
       <div class="flex-1 overflow-auto">
-        <table
-          class="log-table w-full table-fixed text-left border-collapse"
-          style={{ 'min-width': `${tableMinWidth()}px` }}
-        >
+        {/* `w-max`, nicht `w-full`: die Tabelle wird so breit, wie ihr Inhalt
+            es verlangt, und der Behälter darüber scrollt seitwärts. Mit
+            `w-full` staucht der Browser stattdessen alle Spalten auf die
+            Fensterbreite zusammen. */}
+        <table class="log-table w-max text-left border-collapse">
           <thead class="sticky top-0 z-10 bg-gray-100 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
             <tr>
               <Th key="time" label="Time" />
               <Th key="type" label="Type" />
               <Th key="action" label="Action" />
               <Th key="source" label="Source" />
-              <th class="px-1 py-2" style={{ width: `${DIRECTION_COLUMN_WIDTH}px` }}></th>
+              <th class="px-1 py-2"></th>
               <Th key="destination" label="Destination" />
               <Show when={showCol('country')}>
                 <Th key="country" label="Country" center />
@@ -705,12 +654,12 @@ export default function LogsView(props: { query: string }) {
                           <Show when={showCol('proto')}>
                             <td class="px-2 py-1.5 text-[12px] text-gray-400 uppercase">{protocolName(row.protocol) ?? '—'}</td>
                           </Show>
-                          <td class="px-2 py-1.5 text-[12px] text-gray-400 truncate" title={serviceFor(row)}>
+                          <td class="px-2 py-1.5 text-[12px] text-gray-400 whitespace-nowrap">
                             {serviceFor(row)}
                           </td>
                           <Show when={showCol('rule')}>
                             <td
-                              class="px-2 py-1.5 text-[12px] text-gray-400 whitespace-nowrap max-w-[200px] truncate"
+                              class="px-2 py-1.5 text-[12px] text-gray-400 whitespace-nowrap max-w-[480px] truncate"
                               title={infoFor(row)}
                             >
                               {infoFor(row)}

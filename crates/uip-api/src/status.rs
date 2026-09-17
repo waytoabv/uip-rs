@@ -7,7 +7,7 @@
 
 use axum::extract::State;
 use axum::Json;
-use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::path::Path;
@@ -17,35 +17,6 @@ use crate::error::ApiError;
 
 /// Dasselbe Verzeichnis, das `uip-core::Settings` als Vorgabe kennt.
 const DEFAULT_GEOIP_DIR: &str = "/var/lib/uip/geoip";
-
-/// Der Zufallsversatz aus `lxc/systemd/uip-geoip.timer` (`RandomizedDelaySec`).
-const GEOIP_JITTER_HOURS: i64 = 6;
-
-/// Der nächste GeoIP-Lauf als Zeitfenster.
-///
-/// Abgeleitet aus `lxc/systemd/uip-geoip.timer`: `OnCalendar=weekly` liest
-/// systemd als Montag 00:00 Ortszeit, `RandomizedDelaySec=6h` schiebt den Lauf
-/// um bis zu sechs Stunden nach hinten. Deshalb ein Fenster und kein Zeitpunkt
-/// — ein exakter Termin wäre hier gelogen.
-///
-/// Das ist die eine Stelle, an der die App etwas behauptet, das sie nicht
-/// beobachtet: sie läuft unter systemd, statt es zu befragen. Wer die
-/// Timer-Datei ändert, muss die beiden Werte hier mitziehen.
-fn next_geoip_run(now: DateTime<Local>) -> (DateTime<Local>, DateTime<Local>) {
-    let days_to_monday = (7 - now.weekday().num_days_from_monday() as i64) % 7;
-    let midnight = now.date_naive() + Duration::days(days_to_monday);
-    let naive = midnight.and_hms_opt(0, 0, 0).expect("Mitternacht gibt es");
-    // `earliest` statt `unwrap`: in der Nacht der Zeitumstellung kann
-    // Mitternacht mehrdeutig sein oder ganz fehlen.
-    let mut start = Local
-        .from_local_datetime(&naive)
-        .earliest()
-        .unwrap_or_else(|| now + Duration::days(days_to_monday));
-    if start <= now {
-        start += Duration::days(7);
-    }
-    (start, start + Duration::hours(GEOIP_JITTER_HOURS))
-}
 
 /// Wann die Datei zuletzt geschrieben wurde — `None`, wenn es sie nicht gibt.
 fn modified_at(path: &Path) -> Option<DateTime<Utc>> {
@@ -75,8 +46,7 @@ pub async fn get_status(State(pool): State<PgPool>) -> Result<Json<Value>, ApiEr
     // behauptet, während die ASN-Namen fehlen.
     let city = modified_at(&dir.join("GeoLite2-City.mmdb"));
     let asn = modified_at(&dir.join("GeoLite2-ASN.mmdb"));
-
-    let (next_from, next_until) = next_geoip_run(Local::now());
+    let status = config(&pool, "maxmind_status").await;
 
     // Der Punkt in der Kopfzeile soll drei Fälle unterscheiden: abgeschaltet,
     // verbunden, gestört. Ohne `enabled` wäre „nie gemeldet" nicht von „gerade
@@ -96,10 +66,12 @@ pub async fn get_status(State(pool): State<PgPool>) -> Result<Json<Value>, ApiEr
             "city": city.map(|t| t.to_rfc3339()),
             "asn": asn.map(|t| t.to_rfc3339()),
         },
-        "maxmind_next_update": {
-            "from": next_from.with_timezone(&Utc).to_rfc3339(),
-            "until": next_until.with_timezone(&Utc).to_rfc3339(),
-        },
+        // Beobachtet, nicht abgeleitet: der Aktualisierer schreibt hier hin,
+        // wann er das nächste Mal nachsieht. Vorher stand der Termin in einer
+        // systemd-Unit, die diese Anwendung nicht liest — sie musste ihn
+        // nachbauen und lag daneben, sobald jemand die Datei änderte.
+        "maxmind_next_update": status.as_ref().and_then(|v| v.get("next_check").cloned()),
+        "maxmind_error": status.as_ref().and_then(|v| v.get("error").cloned()),
     })))
 }
 
@@ -108,40 +80,7 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
-    use chrono::NaiveDate;
     use tower::ServiceExt;
-
-    fn local(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Local> {
-        Local
-            .from_local_datetime(
-                &NaiveDate::from_ymd_opt(y, m, d).unwrap().and_hms_opt(h, min, 0).unwrap(),
-            )
-            .earliest()
-            .unwrap()
-    }
-
-    /// Der Timer steht auf „weekly", und das heißt bei systemd Montag 00:00 —
-    /// nicht „sieben Tage nach dem letzten Lauf".
-    #[test]
-    fn the_next_run_is_the_coming_monday() {
-        // Dienstag → der Montag darauf.
-        let (from, until) = next_geoip_run(local(2026, 9, 15, 22, 30));
-        assert_eq!(from, local(2026, 9, 21, 0, 0));
-        assert_eq!(until, local(2026, 9, 21, 6, 0));
-
-        // Sonntagnacht → derselbe kommende Montag, wenige Stunden später.
-        let (from, _) = next_geoip_run(local(2026, 9, 20, 23, 59));
-        assert_eq!(from, local(2026, 9, 21, 0, 0));
-    }
-
-    /// Am Montag selbst darf nicht der heutige, schon vergangene Termin
-    /// stehen bleiben — sonst zeigte die Leiste den ganzen Montag über einen
-    /// Lauf an, der bereits hinter uns liegt.
-    #[test]
-    fn monday_points_at_the_next_one_not_todays() {
-        let (from, _) = next_geoip_run(local(2026, 9, 21, 9, 0));
-        assert_eq!(from, local(2026, 9, 28, 0, 0));
-    }
 
     #[sqlx::test(migrations = "../../migrations")]
     async fn unknown_sources_report_null_rather_than_zero(pool: sqlx::PgPool) {
@@ -159,7 +98,35 @@ mod tests {
         assert!(body["abuseipdb"].is_null(), "unbekannt ist nicht 0");
         // Das Vorgabeverzeichnis gibt es im Test nicht — also kein Stand.
         assert!(body["maxmind"]["last_update"].is_null());
-        assert!(body["maxmind_next_update"]["from"].is_string());
+        // Kein Aktualisierer gelaufen: der nächste Termin ist unbekannt und
+        // wird als solcher gemeldet, nicht als erfundenes Datum.
+        assert!(body["maxmind_next_update"].is_null());
+    }
+
+    /// Der nächste Abruf kommt aus dem, was der Aktualisierer hinterlassen
+    /// hat — er wird nicht aus einem Zeitplan errechnet, den diese Anwendung
+    /// gar nicht kennt.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn the_next_maxmind_check_is_the_one_the_updater_recorded(pool: sqlx::PgPool) {
+        sqlx::query(
+            r#"INSERT INTO system_config (key, value) VALUES ('maxmind_status',
+             '{"next_check": "2026-09-18T06:00:00+00:00", "error": "401 Unauthorized"}'::jsonb)"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
+        let res = app
+            .oneshot(Request::get("/api/status").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["maxmind_next_update"].as_str(), Some("2026-09-18T06:00:00+00:00"));
+        assert_eq!(body["maxmind_error"].as_str(), Some("401 Unauthorized"));
     }
 
     /// Der Punkt muss „aus", „läuft" und „gestört" auseinanderhalten können.

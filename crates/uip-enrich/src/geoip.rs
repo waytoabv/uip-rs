@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-/// Wie oft nachgesehen wird, ob geoipupdate neue Dateien hingelegt hat.
+/// Wie oft nachgesehen wird, ob neue Dateien im Verzeichnis liegen.
 const RELOAD_CHECK: Duration = Duration::from_secs(300);
 
 struct Databases {
@@ -55,7 +55,7 @@ impl MaxmindGeo {
         )
     }
 
-    fn reload(&self) {
+    pub fn reload(&self) {
         let open = |p: &Option<PathBuf>| -> Option<Reader<Vec<u8>>> {
             Reader::open_readfile(p.as_ref()?).ok()
         };

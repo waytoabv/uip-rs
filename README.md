@@ -32,10 +32,15 @@ start). Migrations run at startup, so the first start after an update takes
 longer than usual.
 
 The container defaults to 2 cores, 3 GB RAM and 12 GB disk: the release build
-is the peak, not the running service. `MAXMIND_ACCOUNT_ID` and
-`MAXMIND_LICENSE_KEY` in the environment enable GeoIP; without them the map
-stays empty and everything else works. The generated database password is
+is the peak, not the running service. The generated database password is
 written to `~/uip.creds` and to `/etc/uip/uip.env`.
+
+`MAXMIND_ACCOUNT_ID` and `MAXMIND_LICENSE_KEY` in the environment enable GeoIP
+at install time, but they are no longer required then: the application fetches
+the GeoLite2 databases itself over MaxMind's direct-download API and checks
+daily for a newer build, so the credentials can just as well be entered under
+Settings afterwards. Without them country and ASN stay empty and everything
+else works.
 
 ## Build
 

@@ -286,15 +286,13 @@ tbody tr:hover {
   color: #6b4708;
 }
 
-/* Die Log-Tabelle arbeitet mit festen Spaltenbreiten. Ohne diese Klammer ragt
-   jeder Inhalt, der breiter ist als seine Spalte, einfach in die Nachbarspalte
-   hinein, statt abgeschnitten zu werden — beim Dienstnamen und bei jeder
-   Überschrift, die knapp nicht passte, war genau das zu sehen.
+/* Inhalt bestimmt die Spaltenbreite, also darf nichts umbrechen — eine
+   umgebrochene Zelle machte die Spalte schmal und die Zeile hoch, statt die
+   Tabelle breit. Was dann nicht mehr ins Fenster passt, scrollt seitwärts.
 
    Nur Kopf- und Datenzeilen: die aufgeklappte Detailzeile spannt über alle
-   Spalten und soll sich frei ausbreiten dürfen. */
+   Spalten und soll umbrechen dürfen. */
 .log-table th,
 .log-table tr.log-row > td {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -33,6 +33,8 @@ const SECTIONS: { title: string; note?: string; fields: Field[] }[] = [
     fields: [
       { key: 'rdns_enabled', label: 'Reverse DNS', kind: 'bool' },
       { key: 'geoip_dir', label: 'GeoIP directory', kind: 'text', hint: 'where the .mmdb files live' },
+      { key: 'maxmind_account_id', label: 'MaxMind account', kind: 'text', hint: 'GeoLite2 downloads, checked daily' },
+      { key: 'maxmind_license_key', label: 'MaxMind key', kind: 'secret' },
       { key: 'abuseipdb_api_key', label: 'AbuseIPDB key', kind: 'secret', hint: 'blocked firewall rows only' },
     ],
   },

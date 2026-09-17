@@ -24,5 +24,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 async-trait = "0.1"
 arc-swap = "1"
 maxminddb = "0.26"
+flate2 = "1"
+tar = "0.4"
 hickory-resolver = "0.25"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

@@ -42,10 +42,30 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(uip_ingest::udp::run_udp(udp_sock, log_tx, fw_ctx));
 
     // GeoIP: fehlende oder veraltete mmdb-Dateien sind kein Fehler, nur leere
-    // Anreicherung. Der Watcher übernimmt Aktualisierungen von geoipupdate,
+    // Anreicherung. Der Watcher bemerkt neue Dateien an ihrer mtime,
     // erkennbar an einer neuen mtime.
     let geo = Arc::new(uip_enrich::geoip::MaxmindGeo::from_dir(&settings.geoip_dir)?);
     tokio::spawn(uip_enrich::geoip::watch_for_updates(geo.clone()));
+
+    // Die Datenbanken holt die Anwendung selbst, sobald Zugangsdaten
+    // hinterlegt sind — vorher lag das bei geoipupdate und einem systemd-Timer,
+    // und wer den Schlüssel erst nach dem Installieren bekam, hatte keinen Weg
+    // mehr hinein.
+    match (&settings.maxmind_account_id, &settings.maxmind_license_key) {
+        (Some(account), Some(key)) => {
+            tracing::info!(dir = %settings.geoip_dir.display(), "geolite2 updates enabled");
+            tokio::spawn(uip_enrich::maxmind::run_updater(
+                uip_enrich::maxmind::Maxmind::new(
+                    account.clone(),
+                    key.clone(),
+                    settings.geoip_dir.clone(),
+                ),
+                pool.clone(),
+                geo.clone(),
+            ));
+        }
+        _ => tracing::info!("no maxmind credentials, geoip stays with whatever is on disk"),
+    }
 
     let rdns: Option<Arc<dyn uip_enrich::RdnsSource>> = if settings.rdns_enabled {
         match uip_enrich::rdns::Rdns::from_system() {

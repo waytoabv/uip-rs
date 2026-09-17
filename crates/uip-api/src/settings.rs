@@ -22,6 +22,8 @@ const ALLOWED: &[(&str, Kind)] = &[
     ("rdns_enabled", Kind::Bool),
     ("abuseipdb_api_key", Kind::Secret),
     ("geoip_dir", Kind::Text),
+    ("maxmind_account_id", Kind::Text),
+    ("maxmind_license_key", Kind::Secret),
     ("pihole_url", Kind::Text),
     ("pihole_password", Kind::Secret),
     ("pihole_enabled", Kind::Bool),
