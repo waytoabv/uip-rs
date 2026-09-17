@@ -58,13 +58,11 @@ function update_script() {
   # nicht wieder.
   export PATH="${HOME}/.cargo/bin:${PATH}"
 
-  # Zuerst anhalten, dann tauschen: die alte Instanz darf nicht mehr schreiben,
-  # wenn die neue ihre Migrationen fährt.
-  msg_info "Stopping Service"
-  systemctl stop uip
-  msg_ok "Stopped Service"
-
-  msg_info "Updating ${APP} (Patience)"
+  # Erst bauen, dann anhalten. Andersherum — und so war es — lässt ein
+  # Übersetzungsfehler den Dienst gestoppt zurück: angehalten ist er dann
+  # schon, das neue Binary gibt es nicht, und das Skript bricht dazwischen ab.
+  # Ein misslungener Build darf nichts kosten außer Zeit.
+  msg_info "Building ${APP} (Patience)"
   cd /opt/uip-src || exit
   $STD git pull --ff-only
   # Das Frontend zuerst: rust-embed backt ui/dist/ in das Binary ein, ein
@@ -74,8 +72,15 @@ function update_script() {
   $STD npm run build
   cd /opt/uip-src || exit
   $STD cargo build --release -p uip
+  msg_ok "Built ${APP}"
+
+  # Ab hier ist der Dienst kurz weg: anhalten, tauschen, starten. Die alte
+  # Instanz darf nicht mehr schreiben, wenn die neue ihre Migrationen fährt.
+  msg_info "Stopping Service"
+  systemctl stop uip
+  msg_ok "Stopped Service"
+
   install -m 755 /opt/uip-src/target/release/uip /usr/local/bin/uip
-  msg_ok "Updated ${APP}"
 
   # Migrationen laufen beim Start, vor dem HTTP-Listener. Der erste Start nach
   # einer Aktualisierung darf deshalb länger brauchen, ohne dass etwas hängt.

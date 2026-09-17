@@ -234,7 +234,7 @@ describe('protocolName', () => {
   });
 });
 
-suite('shortenHost', () => {
+describe('shortenHost', () => {
   // Der Grenzwert ist das 90. Perzentil einer Tagesmenge echter Auflösungen:
   // neun von zehn Namen bleiben unberührt.
   it('lässt kurze Namen in Ruhe', () => {
