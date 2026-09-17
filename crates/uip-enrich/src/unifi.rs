@@ -376,6 +376,55 @@ mod tests {
         assert_eq!(bridge_for(&json!({"purpose": "remote-user-vpn", "name": "VPN"})), None);
     }
 
+    /// Ein vollständiger Satz, wie ihn ein echtes Gateway liefert — die Formen
+    /// sind aus einer laufenden Anlage übernommen, die Namen ersetzt.
+    ///
+    /// Der lehrreiche Fall ist das Vorgabenetz: `vlan: null` bei
+    /// `vlan_enabled: false`. Es liegt auf br0, und keine der anderen Zeilen
+    /// darf dort mit landen — sonst trügen alle Netze denselben Namen.
+    #[test]
+    fn a_whole_controller_config_maps_without_collisions() {
+        let networks = vec![
+            json!({"name": "WAN", "purpose": "wan", "vlan": null, "vlan_enabled": null,
+                   "enabled": true, "wan_networkgroup": "WAN"}),
+            json!({"name": "Management", "purpose": "corporate", "vlan": null,
+                   "vlan_enabled": false, "enabled": true}),
+            json!({"name": "#0 - Server", "purpose": "corporate", "vlan": 10,
+                   "vlan_enabled": true, "enabled": true}),
+            json!({"name": "#2 - Guests", "purpose": "corporate", "vlan": 20,
+                   "vlan_enabled": true, "enabled": true}),
+            json!({"name": "#1 - Internal", "purpose": "corporate", "vlan": 15,
+                   "vlan_enabled": true, "enabled": true}),
+            json!({"name": "Wireguard Server", "purpose": "remote-user-vpn", "vlan": null,
+                   "vlan_enabled": null, "enabled": true}),
+            json!({"name": "VPN Provider", "purpose": "vpn-client", "vlan": null,
+                   "vlan_enabled": null, "enabled": true}),
+        ];
+
+        let bridges: Vec<_> = networks
+            .iter()
+            .filter_map(|n| bridge_for(n).map(|b| (b, text(n, "name").unwrap_or_default())))
+            .collect();
+
+        assert_eq!(
+            bridges,
+            [
+                ("br0".to_string(), "Management".to_string()),
+                ("br10".to_string(), "#0 - Server".to_string()),
+                ("br20".to_string(), "#2 - Guests".to_string()),
+                ("br15".to_string(), "#1 - Internal".to_string()),
+            ],
+            "WAN und beide VPN-Netze haben keine Bridge, das Vorgabenetz genau eine"
+        );
+
+        // Und das WAN findet seinen Namen über die Gruppe.
+        let devices = vec![json!({"wan1": {"ifname": "eth1"}})];
+        assert_eq!(
+            wan_interfaces(&devices, &networks),
+            [("eth1".to_string(), "WAN".to_string())]
+        );
+    }
+
     /// Die WAN-Schnittstelle steht nur am Gerät. Genau diese Form meldet das
     /// Gateway (`wan1.ifname`).
     #[test]
