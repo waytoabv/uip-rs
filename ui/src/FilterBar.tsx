@@ -5,7 +5,7 @@ import {
   describe,
   removeTerm,
   DIRECTIONS,
-  emptyFilters,
+  defaultFilters,
   isMultiActive,
   LOG_TYPES,
   RANGE_OPTIONS,
@@ -111,6 +111,20 @@ const FilterBar: Component<Props> = (props) => {
   };
   const [showPanel, setShowPanel] = createSignal(false);
 
+  /**
+   * Ob gerade genau die Vorauswahl gilt.
+   *
+   * Entscheidet, ob „Clear all" überhaupt dasteht: ein Knopf, der nichts täte,
+   * ist schlimmer als keiner. Verglichen wird Feld für Feld, weil auch eine
+   * Pille zurückgenommen sein kann, ohne dass ein Chip entstünde.
+   */
+  const isDefault = () => {
+    const base = defaultFilters();
+    return (Object.keys(base) as (keyof FilterState)[]).every(
+      (k) => props.filters[k] === base[k],
+    );
+  };
+
   // Wie viele Filter gerade wirken — die Zahl steht am Knopf, damit man
   // ein zugeklapptes Panel nicht für leer hält.
   const activeCount = () => describe(props.filters).length;
@@ -185,83 +199,10 @@ const FilterBar: Component<Props> = (props) => {
           </For>
         </div>
 
-        <div class="h-5 w-px bg-gray-300 dark:bg-gray-700" />
 
-        <div class="flex items-center gap-1">
-          <For each={RANGE_OPTIONS}>
-            {(r) => (
-              <button
-                type="button"
-                onClick={() => set('range', r.value)}
-                class={`rounded px-2 py-1 text-xs font-medium transition-all ${
-                  props.filters.range === r.value
-                    ? 'border border-gray-400 dark:border-gray-600 bg-white dark:bg-black text-gray-900 dark:text-white'
-                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-300'
-                }`}
-              >
-                {r.label}
-              </button>
-            )}
-          </For>
-          {/* Kein Kalender-Picker in dieser Phase — statt sie zu verstecken,
-              bleibt die Pille sichtbar (Bild der Vorlage bleibt vollständig),
-              aber sichtbar abgeschaltet statt so zu tun als reagiere sie. */}
-          <button
-            type="button"
-            disabled
-            title="Custom date range — not available yet"
-            class="cursor-not-allowed rounded px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 opacity-60"
-          >
-            Custom
-          </button>
-        </div>
-      </div>
-
-      {/* Reihe 2: was gerade filtert, und die zwei Wege es zu ändern.
-          Der Fork hat die zehn Einzelfelder durch ein Suchfeld mit
-          Übernahme-auf-Enter plus ein Filterpanel ersetzt; die Chips zeigen,
-          was davon gerade wirkt. */}
-      <div class="flex flex-col gap-2 lg:flex-row lg:items-start">
-        <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-          <Show
-            when={describe(props.filters).length > 0}
-            fallback={<span class="py-1 text-[11px] text-gray-600 dark:text-gray-400">No filters</span>}
-          >
-            <For each={describe(props.filters)}>
-              {(chip) => (
-                <span class="filter-chip">
-                  <span class="filter-chip-value">{chip.label}</span>
-                  <button
-                    type="button"
-                    aria-label={`Remove filter ${chip.label}`}
-                    class="filter-chip-remove"
-                    onClick={() =>
-                      set(
-                        chip.key,
-                        chip.term ? removeTerm(props.filters.q, chip.term) : '',
-                      )
-                    }
-                  >
-                    ✕
-                  </button>
-                </span>
-              )}
-            </For>
-            <button
-              type="button"
-              class="px-1.5 py-0.5 text-[11px] text-gray-500 hover:text-gray-900 dark:hover:text-gray-300"
-              onClick={() => {
-                setTyped('');
-                props.onDraft('');
-                props.onChange(emptyFilters());
-              }}
-            >
-              Clear all
-            </button>
-          </Show>
-        </div>
-
-        <div class="flex shrink-0 items-center gap-2">
+        {/* Suche und Panel stehen rechts in derselben Zeile wie die
+            Pillen: was die Ansicht eingrenzt, gehört zusammen. */}
+        <div class="ml-auto flex shrink-0 items-center gap-2">
           <div class="relative w-full sm:w-72">
             <input
               type="text"
@@ -317,8 +258,79 @@ const FilterBar: Component<Props> = (props) => {
           </div>
         </div>
       </div>
+
+      {/* Reihe 2: über welchen Zeitraum, was sonst noch filtert, und der
+          Weg zurück. Die Pillen oben tauchen hier bewusst nicht als Chip auf —
+          sie zeigen ihren Zustand selbst. */}
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div class="flex items-center gap-1">
+          <For each={RANGE_OPTIONS}>
+            {(r) => (
+              <button
+                type="button"
+                onClick={() => set('range', r.value)}
+                class={`rounded px-2 py-1 text-xs font-medium transition-all ${
+                  props.filters.range === r.value
+                    ? 'border border-gray-400 dark:border-gray-600 bg-white dark:bg-black text-gray-900 dark:text-white'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-300'
+                }`}
+              >
+                {r.label}
+              </button>
+            )}
+          </For>
+          {/* Kein Kalender-Picker in dieser Phase — statt sie zu verstecken,
+              bleibt die Pille sichtbar (Bild der Vorlage bleibt vollständig),
+              aber sichtbar abgeschaltet statt so zu tun als reagiere sie. */}
+          <button
+            type="button"
+            disabled
+            title="Custom date range — not available yet"
+            class="cursor-not-allowed rounded px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 opacity-60"
+          >
+            Custom
+          </button>
+        </div>
+
+        <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+          <For each={describe(props.filters)}>
+            {(chip) => (
+              <span class="filter-chip">
+                <span class="filter-chip-value">{chip.label}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove filter ${chip.label}`}
+                  class="filter-chip-remove"
+                  onClick={() =>
+                    set(chip.key, chip.term ? removeTerm(props.filters.q, chip.term) : '')
+                  }
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+          </For>
+        </div>
+
+        {/* Zurück auf die Vorauswahl, nicht auf „alles": das ist der Zustand,
+            den jemand als normal gewählt hat. */}
+        <Show when={!isDefault()}>
+          <button
+            type="button"
+            class="shrink-0 px-1.5 py-0.5 text-[11px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
+            onClick={() => {
+              setTyped('');
+              props.onDraft('');
+              props.onChange(defaultFilters());
+            }}
+          >
+            Clear all
+          </button>
+        </Show>
+      </div>
     </div>
   );
+
 };
 
 export default FilterBar;

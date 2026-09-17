@@ -7,6 +7,7 @@ import {
   describe,
   removeTerm,
   splitTerms,
+  defaultFilters,
   emptyFilters,
   isMultiActive,
   toggleMulti,
@@ -130,12 +131,52 @@ suite('describe', () => {
   });
 });
 
+suite('defaultFilters — womit die Ansicht startet', () => {
+  // Ein Firewall-Log, das beim Öffnen auch DNS und DHCP zeigt, verlangt als
+  // Erstes eine Aufräumarbeit, die fast jeder gleich macht.
+  it('zeigt erlaubten und geblockten Firewall-Verkehr, der irgendwohin geht', () => {
+    const d = defaultFilters();
+    expect(d.log_type).toBe('firewall');
+    expect(d.action).toBe('allow,block');
+    expect(d.direction).toBe('inbound,outbound,inter_vlan');
+  });
+
+  it('lässt alles andere offen — kein Zeitraum, keine Suche', () => {
+    const d = defaultFilters();
+    expect(d.range).toBe('');
+    expect(d.q).toBe('');
+    expect(d.country).toBe('');
+  });
+
+  it('erzeugt genau diese drei Parameter und sonst nichts', () => {
+    const params = new URLSearchParams(toQuery(defaultFilters()));
+    expect([...params.keys()].sort()).toEqual(['action', 'direction', 'log_type']);
+  });
+
+  // Die Vorauswahl ist eine Auswahl, keine Sperre: jede Pille lässt sich
+  // zurücknehmen, und dann steht dort wieder der neutrale leere Wert.
+  it('ist über die Pillen vollständig zurücknehmbar', () => {
+    const d = defaultFilters();
+    const all = toggleMulti(toggleMulti(d.action, ACTIONS, 'redirect'), ACTIONS, 'unknown');
+    expect(all).toBe('');
+  });
+});
+
 suite('describe — welche Filter einen Chip bekommen', () => {
-  it('zeigt Aktion und Richtung, sonst behauptet die Zeile "No filters" während gefiltert wird', () => {
+  // Aktion und Richtung haben jeweils eine eigene Pillenreihe, die ihren
+  // Zustand zeigt. Ein Chip daneben sagte dasselbe ein zweites Mal — und da
+  // die Ansicht mit einer Vorauswahl startet, stünden dort zwei Chips, die
+  // nie verschwinden.
+  it('lässt Aktion und Richtung weg — dafür gibt es die Pillen', () => {
     const chips = describe({ ...emptyFilters(), action: 'block', direction: 'inbound' });
     const labels = chips.map((c: { label: string }) => c.label);
-    expect(labels.some((l) => l.startsWith('Action:'))).toBe(true);
-    expect(labels.some((l) => l.startsWith('Direction:'))).toBe(true);
+    expect(labels.some((l) => l.startsWith('Action:'))).toBe(false);
+    expect(labels.some((l) => l.startsWith('Direction:'))).toBe(false);
+  });
+
+  it('zeigt weiter, was keine eigene Pille hat', () => {
+    const chips = describe({ ...emptyFilters(), action: 'block', country: 'DE', port: '443' });
+    expect(chips.map((c) => c.key).sort()).toEqual(['country', 'port']);
   });
 
   it('lässt den Log-Typ weg — seine Pillen zeigen ihren Zustand selbst', () => {

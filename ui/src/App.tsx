@@ -6,7 +6,7 @@ import LogsView from './LogsView';
 import ShellHeader, { type NavTab } from './ShellHeader';
 import ShellSettings from './ShellSettings';
 import ThreatMap from './ThreatMap';
-import { describe, emptyFilters, toQuery, type FilterState } from './filters';
+import { defaultFilters, describe, toQuery, type FilterState } from './filters';
 import { loadInterfaceLabels } from './interfaceLabels';
 
 const THEME_KEY = 'uip-theme';
@@ -33,7 +33,7 @@ function systemTheme(): Theme {
 }
 
 export default function App() {
-  const [filters, setFilters] = createSignal<FilterState>(emptyFilters());
+  const [filters, setFilters] = createSignal<FilterState>(defaultFilters());
   const [view, setView] = createSignal<View>('logs');
   // `null` heißt: keine gespeicherte Wahl, die Systemeinstellung gilt.
   const [theme, setTheme] = createSignal<Theme | null>(storedTheme());

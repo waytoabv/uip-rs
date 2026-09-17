@@ -38,6 +38,26 @@ export interface FilterState {
   q: string;
 }
 
+/**
+ * Womit die Ansicht startet.
+ *
+ * Nicht „alles": ein Firewall-Log, das beim Öffnen auch DNS-, DHCP- und
+ * WLAN-Zeilen zeigt, verlangt als Erstes eine Aufräumarbeit, die fast jeder
+ * gleich macht. Die Vorauswahl ist die, die man ohnehin trifft — erlaubter und
+ * geblockter Firewall-Verkehr, der irgendwo hin oder her geht. `local` und
+ * `nat` bleiben draußen: das ist das Gespräch des Gateways mit sich selbst.
+ *
+ * Alles davon steht als Pille da und ist mit einem Klick zurückgenommen.
+ */
+export function defaultFilters(): FilterState {
+  return {
+    ...emptyFilters(),
+    log_type: 'firewall',
+    action: 'allow,block',
+    direction: 'inbound,outbound,inter_vlan',
+  };
+}
+
 export function emptyFilters(): FilterState {
   return {
     log_type: '',
@@ -236,13 +256,11 @@ const FIELD_LABELS: Record<keyof FilterState, string> = {
   q: 'Search',
 };
 
-// Fields whose "all selected" state (empty string) means no chip should
-// show — the pill rows already make that visible.
-// Nur der Log-Typ bekommt keinen Chip: seine Pillen zeigen ihren Zustand
-// selbst, und ein Chip daneben wäre dieselbe Aussage zweimal. Aktion und
-// Richtung dagegen erscheinen als Chip — so hält es der Fork auch, und ohne
-// sie behauptete die Zeile "No filters", während gefiltert wird.
-const NO_CHIP_FIELDS = new Set<keyof FilterState>(['log_type']);
+// Was eine eigene Pillenreihe hat, bekommt keinen Chip: die Pillen zeigen
+// ihren Zustand selbst, und ein Chip daneben wäre dieselbe Aussage zweimal.
+// Seit die Ansicht mit einer Vorauswahl startet, wäre es außerdem eine
+// Dauerzeile aus zwei Chips, die nie verschwindet.
+const NO_CHIP_FIELDS = new Set<keyof FilterState>(['log_type', 'action', 'direction']);
 
 // Liefert je einen Chip für jeden aktiven Filter — zum Anzeigen und, über
 // den `key`, zum gezielten Löschen genau dieses einen Filters.
