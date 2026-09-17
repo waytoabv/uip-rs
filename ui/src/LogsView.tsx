@@ -434,7 +434,13 @@ export default function LogsView(props: { query: string }) {
     // Datenbank sie längst hat.
     es.addEventListener('enriched', (e) => {
       const facts = JSON.parse((e as MessageEvent).data) as Enrichment;
-      setRows((prev) => prev.map((row) => applyEnrichment(row, facts)));
+      setRows((prev) => {
+        const next = prev.map((row) => applyEnrichment(row, facts));
+        // Betrifft der Nachtrag keine sichtbare Zeile, bleibt auch das Array
+        // dasselbe: ein neues löst sonst bei jedem Ereignis einen Abgleich der
+        // ganzen Liste aus, und die kommen im Sekundentakt.
+        return next.some((row, i) => row !== prev[i]) ? next : prev;
+      });
     });
     es.addEventListener('suspended', () => setSuspended(true));
     onCleanup(() => es.close());

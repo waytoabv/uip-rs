@@ -87,6 +87,26 @@ suite('applyEnrichment', () => {
     expect(out.rdns).toBe('ns1.example.net.');
   });
 
+  /// Der Grund für die Referenz-Gleichheit: `<For>` vergleicht Referenzen.
+  /// Ein neues Objekt heißt neuer DOM-Knoten und damit ein neu geladenes
+  /// Flaggenbild — bei einem wiederkehrenden Ziel mehrmals pro Sekunde.
+  it('gibt dieselbe Zeile zurück, wenn der Nachtrag nichts hinzufügt', () => {
+    const complete = row({
+      geo_country: 'US',
+      geo_city: 'Sterling',
+      geo_lat: 39.0,
+      geo_lon: -77.4,
+      asn_number: 394353,
+      asn_name: 'Vercara, LLC',
+      rdns: 'ns1.example.net.',
+    });
+    expect(applyEnrichment(complete, facts)).toBe(complete);
+
+    // Und ein zweiter Nachtrag derselben Tatsachen ebenfalls nicht.
+    const once = applyEnrichment(row(), facts);
+    expect(applyEnrichment(once, facts)).toBe(once);
+  });
+
   it('trägt auch Nullwerte nicht als Wert ein', () => {
     const out = applyEnrichment(row(), facts);
     expect(out.threat_score).toBeNull();

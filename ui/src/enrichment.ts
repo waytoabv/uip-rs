@@ -29,23 +29,34 @@ export interface Enrichment {
  * oder Ziel vorkommt. Vorhandene Werte bleiben unangetastet; eine über
  * `/api/logs` geladene Zeile hat ihre Angaben aus der Datenbank, und die ist
  * die verlässlichere Quelle.
+ *
+ * Ändert sich nichts, kommt **dieselbe** Zeile zurück, nicht eine gleiche.
+ * `<For>` in Solid vergleicht Referenzen: ein neues Objekt heißt ein neuer
+ * DOM-Knoten, und damit ein neu geladenes Flaggenbild. Bei einem
+ * wiederkehrenden Ziel kam der Nachtrag mehrmals pro Sekunde — sichtbar als
+ * flackernde Flagge.
  */
 export function applyEnrichment(row: LogEntry, facts: Enrichment): LogEntry {
   if (row.src_ip !== facts.ip && row.dst_ip !== facts.ip) return row;
-  const fill = <K extends keyof LogEntry>(key: K): LogEntry[K] =>
-    row[key] == null ? (facts[key as keyof Enrichment] as LogEntry[K]) : row[key];
-  return {
-    ...row,
-    geo_country: fill('geo_country'),
-    geo_city: fill('geo_city'),
-    geo_lat: fill('geo_lat'),
-    geo_lon: fill('geo_lon'),
-    asn_number: fill('asn_number'),
-    asn_name: fill('asn_name'),
-    rdns: fill('rdns'),
-    threat_score: fill('threat_score'),
-    threat_categories: fill('threat_categories'),
-    abuse_is_tor: fill('abuse_is_tor'),
-  };
-}
 
+  const FIELDS = [
+    'geo_country',
+    'geo_city',
+    'geo_lat',
+    'geo_lon',
+    'asn_number',
+    'asn_name',
+    'rdns',
+    'threat_score',
+    'threat_categories',
+    'abuse_is_tor',
+  ] as const;
+
+  const patch: Partial<LogEntry> = {};
+  for (const key of FIELDS) {
+    if (row[key] == null && facts[key] != null) {
+      (patch as Record<string, unknown>)[key] = facts[key];
+    }
+  }
+  return Object.keys(patch).length === 0 ? row : { ...row, ...patch };
+}

@@ -15,6 +15,8 @@ export default function CountryFlag(props: { code: string | null | undefined; cl
   const valid = () => /^[a-z]{2}$/.test(code());
   return (
     <>
+      {/* Kein `loading="lazy"`: bei sechzehn Pixeln spart das nichts, kostet
+          beim Wiedereinhängen aber einen sichtbaren Moment ohne Bild. */}
       {valid() ? (
         <img
           src={`/flags/${code()}.svg`}
@@ -22,7 +24,6 @@ export default function CountryFlag(props: { code: string | null | undefined; cl
           title={countryName(props.code)}
           width="16"
           height="12"
-          loading="lazy"
           class={props.class ?? 'inline-block h-3 w-4 rounded-[1px] align-[-1px]'}
         />
       ) : null}
