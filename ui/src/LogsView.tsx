@@ -13,6 +13,7 @@ import {
   normalizeRuleDesc,
   protocolName,
   rawMessage,
+  shortenHost,
   serviceName,
   threatDotClass,
 } from './LogHelpers';
@@ -184,33 +185,58 @@ function ActionPill(props: { action: string | null; dhcpEvent: string | null; wi
 }
 
 /**
- * Adresse und Port, immer zweizeilig.
+ * Adresse und Port, immer zwei Zeilen hoch.
  *
- * Die Zeitspalte ist ohnehin zweizeilig (Uhrzeit über Datum) — die Höhe der
- * Zeile steht damit fest, und eine Adresszelle, die mal ein- und mal
- * zweizeilig ist, macht daraus einen Sprung bei jeder eintreffenden Zeile.
- * Also immer zwei: oben der Name, wenn es einen gibt, sonst die Adresse;
- * unten, was davon noch fehlt.
+ * Die Zeitspalte ist ohnehin zweizeilig, die Zeilenhöhe steht damit fest — und
+ * eine Adresszelle, die mal ein- und mal zweizeilig ist, macht daraus einen
+ * Sprung bei jeder eintreffenden Zeile. Innerhalb dieser zwei Zeilen wird der
+ * Platz je nach Inhalt anders aufgeteilt:
  *
- * Keine eigene Maximalbreite: gekappt wird an der Spaltenkante (siehe
- * `.log-table` in index.css). Ein `max-w` hier schnitte den Text ab, obwohl
- * die Spalte breiter ist — und legte die Spaltenbreite gleich mit fest.
+ * - Mit Namen: oben der Name (gekürzt, ganz im Tooltip), unten Adresse:Port.
+ * - Ohne Namen, IPv6: die Adresse darf beide Zeilen nutzen. Achtunddreißig
+ *   Zeichen auf einer Zeile zwängen die Spalte auf 266 Pixel, über zwei sind
+ *   es 133 — bei einer Spalte, die sonst 160 braucht, ist das der Unterschied
+ *   zwischen Passen und Scrollen.
+ * - Ohne Namen, IPv4: Adresse oben, Port unten. Kurz genug für eine Zeile.
  */
 function AddressCell(props: { ip: string | null; port: number | null; name: string | null }) {
-  const primary = () => props.name ?? props.ip;
-  const detail = () => (props.name ? props.ip : null);
+  const isV6 = () => !!props.ip?.includes(':');
+  const withPort = () => (props.port == null ? props.ip : `${props.ip}:${props.port}`);
   return (
     <Show when={props.ip} fallback={<span class="text-gray-500 dark:text-gray-400">—</span>}>
       <div class="leading-tight">
-        <div class="truncate text-[13px] text-gray-700 dark:text-gray-200" title={primary() ?? undefined}>
-          {primary()}
-        </div>
-        <div class="truncate text-[11px] text-gray-500">
-          {detail()}
-          <Show when={props.port != null}>
-            <span class="text-gray-500">:{props.port}</span>
-          </Show>
-        </div>
+        <Show
+          when={props.name}
+          fallback={
+            <Show
+              when={isV6()}
+              fallback={
+                <>
+                  <div class="truncate text-[13px] text-gray-700 dark:text-gray-200">{props.ip}</div>
+                  <div class="truncate text-[11px] text-gray-500 dark:text-gray-400">
+                    <Show when={props.port != null}>:{props.port}</Show>
+                  </div>
+                </>
+              }
+            >
+              {/* `break-all`, weil eine Adresse keine Wortgrenzen hat, an denen
+                  ein Umbruch sinnvoll wäre. */}
+              <div class="cell-wrap-2 break-all text-[13px] text-gray-700 dark:text-gray-200" title={withPort() ?? undefined}>
+                {withPort()}
+              </div>
+            </Show>
+          }
+        >
+          <div
+            class="truncate text-[13px] text-gray-700 dark:text-gray-200"
+            title={props.name ?? undefined}
+          >
+            {shortenHost(props.name)}
+          </div>
+          <div class="truncate text-[11px] text-gray-500 dark:text-gray-400" title={withPort() ?? undefined}>
+            {withPort()}
+          </div>
+        </Show>
       </div>
     </Show>
   );
@@ -226,15 +252,21 @@ function CountryCell(props: { code: string | null }) {
   );
 }
 
+/**
+ * Der Name des Netzbetreibers, nötigenfalls über zwei Zeilen.
+ *
+ * Die Namen sind meist kurz und selten lang: Median sechzehn Zeichen, aber
+ * „Verein zur Foerderung eines Deutschen Forschungsnetzes e.V." sind
+ * neunundfünfzig. Eine Spalte, die den längsten Fall einzeilig fasst, wäre für
+ * neun von zehn Zeilen zu breit — über zwei Zeilen passt auch der Ausreißer in
+ * eine Breite, die dem Regelfall entspricht.
+ */
 function AsnCell(props: { name: string | null }) {
   return (
     <Show when={props.name} fallback={<span class="text-gray-500 dark:text-gray-400">—</span>}>
-      <span
-        class="text-[12px] text-gray-500 whitespace-nowrap truncate inline-block align-bottom max-w-full"
-        title={props.name ?? undefined}
-      >
+      <div class="cell-wrap-2 text-[12px] text-gray-600 dark:text-gray-400" title={props.name ?? undefined}>
         {props.name}
-      </span>
+      </div>
     </Show>
   );
 }
@@ -291,9 +323,37 @@ const [columnWidths, setColumnWidths] = createSignal<Record<string, number>>(sto
  */
 const [measured, setMeasured] = createSignal<Record<string, number>>({});
 
-/** Schmaler als das ist unlesbar, breiter verdrängt alles andere. */
+/** Schmaler als das ist unlesbar. */
 const MIN_COLUMN = 48;
-const MAX_COLUMN = 360;
+
+/**
+ * Wie breit eine Spalte höchstens werden darf, auch wenn ihr längster Wert
+ * mehr verlangt.
+ *
+ * Die Zahlen kommen aus einer Tagesmenge echter Daten, nicht aus dem Gefühl:
+ * Betreibernamen haben einen Median von 16 Zeichen bei Ausreißern bis 59,
+ * Rückwärtsauflösungen 19 bei Ausreißern bis 53, Regelbeschreibungen 28 bei
+ * höchstens 33. Eine Spalte am längsten Fall auszurichten hieße, sie für neun
+ * von zehn Zeilen zu breit zu machen — die Ausreißer brechen stattdessen um
+ * (ASN, IPv6) oder werden gekürzt, mit dem ganzen Wert im Tooltip.
+ */
+const COLUMN_MAX: Record<string, number> = {
+  time: 96,
+  type: 112,
+  action: 96,
+  source: 190,
+  destination: 190,
+  country: 96,
+  asn: 190,
+  // Netznamen tragen beide Seiten: „#1 - VLAN15 - Intern → #0 - VLAN 10 - Server".
+  network: 300,
+  proto: 80,
+  service: 120,
+  rule_info: 230,
+  abuseipdb: 112,
+  categories: 190,
+};
+const MAX_COLUMN_FALLBACK = 240;
 
 /**
  * Eine Kopfzelle, so breit wie ihr Inhalt — und von Hand verstellbar.
@@ -396,7 +456,8 @@ export default function LogsView(props: { query: string }) {
       const key = th.dataset.col;
       if (!key) continue;
       const w = Math.round(th.getBoundingClientRect().width);
-      if (w > 0) next[key] = Math.min(MAX_COLUMN, Math.max(MIN_COLUMN, w));
+      const cap = COLUMN_MAX[key] ?? MAX_COLUMN_FALLBACK;
+      if (w > 0) next[key] = Math.min(cap, Math.max(MIN_COLUMN, w));
     }
     if (Object.keys(next).length) setMeasured(next);
   };

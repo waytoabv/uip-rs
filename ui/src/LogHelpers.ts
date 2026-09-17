@@ -225,6 +225,33 @@ export function networkPath(ifaceIn: string | null | undefined, ifaceOut: string
   return ifaceIn || ifaceOut || '—';
 }
 
+/**
+ * Kürzt einen zu langen Namen auf Anfang und Herkunft: `a23…akamai.com.`
+ *
+ * Rückwärtsauflösungen von CDNs bestehen fast vollständig aus der kodierten
+ * Adresse — `a23-61-199-130.deploy.static.akamaitechnologies.com.` sind
+ * zweiundfünfzig Zeichen, von denen die ersten dreißig nichts sagen, was nicht
+ * schon in der IP-Zeile darunter steht. Aussagekräftig sind der Anfang (er
+ * unterscheidet zwei Nachbarn voneinander) und die letzten beiden Labels (sie
+ * nennen, wem die Adresse gehört).
+ *
+ * Der Grenzwert liegt bei dreißig Zeichen: das ist das 90. Perzentil einer
+ * Tagesmenge echter Auflösungen, neun von zehn Namen bleiben also unberührt.
+ */
+export function shortenHost(name: string | null | undefined, max = 30): string | null {
+  if (!name) return null;
+  if (name.length <= max) return name;
+
+  const trailingDot = name.endsWith('.');
+  const labels = (trailingDot ? name.slice(0, -1) : name).split('.');
+  // Weniger als drei Labels heißt: es gibt nichts wegzulassen, ohne die
+  // Herkunft zu zerstören. Dann bleibt das Kürzen dem Abschneiden überlassen.
+  if (labels.length < 3) return name;
+
+  const origin = labels.slice(-2).join('.') + (trailingDot ? '.' : '');
+  return `${name.slice(0, 3)}…${origin}`;
+}
+
 // ── Lokale vs. entfernte Seite ───────────────────────────────────────────────
 
 /** Privat/reserviert im Sinne der Anzeige — nicht sicherheitskritisch, nur für die Zuordnung von Gerätename/rDNS. */

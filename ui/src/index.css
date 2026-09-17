@@ -311,3 +311,19 @@ tbody tr:hover {
 .log-table tr.log-row > td > div {
   line-height: 1.35;
 }
+
+/* Zellen, die über zwei Zeilen gehen dürfen.
+
+   Die Tabelle setzt `white-space: nowrap`, damit der Inhalt die Spaltenbreite
+   nicht durch Umbrüche bestimmt. Wo zwei Zeilen die bessere Antwort sind — ein
+   langer Betreibername, eine IPv6-Adresse —, wird das hier gezielt
+   zurückgenommen. Zwei Zeilen und nicht mehr: die Zeilenhöhe steht fest, eine
+   dritte wäre unsichtbar. */
+.cell-wrap-2 {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

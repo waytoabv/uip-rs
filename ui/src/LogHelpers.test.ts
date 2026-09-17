@@ -10,6 +10,7 @@ import {
   localSide,
   logTypePillClass,
   networkPath,
+  shortenHost,
   normalizeRuleDesc,
   serviceName,
   threatDotClass,
@@ -230,5 +231,37 @@ describe('protocolName', () => {
     expect(protocolName(null)).toBeNull();
     expect(protocolName('')).toBeNull();
     expect(protocolName('   ')).toBeNull();
+  });
+});
+
+suite('shortenHost', () => {
+  // Der Grenzwert ist das 90. Perzentil einer Tagesmenge echter Auflösungen:
+  // neun von zehn Namen bleiben unberührt.
+  it('lässt kurze Namen in Ruhe', () => {
+    expect(shortenHost('dns.google.')).toBe('dns.google.');
+    expect(shortenHost('ns1.example.com.')).toBe('ns1.example.com.');
+  });
+
+  it('behält Anfang und Herkunft, wirft die kodierte Mitte weg', () => {
+    // Die ersten dreißig Zeichen wiederholen nur die Adresse, die eine Zeile
+    // darunter ohnehin steht.
+    expect(shortenHost('a23-61-199-130.deploy.static.akamaitechnologies.com.'))
+      .toBe('a23…akamaitechnologies.com.');
+  });
+
+  it('behält den abschließenden Punkt nur, wenn er da war', () => {
+    expect(shortenHost('a23-61-199-130.deploy.static.akamaitechnologies.com'))
+      .toBe('a23…akamaitechnologies.com');
+  });
+
+  // Bei zwei Labels gäbe es nichts wegzulassen, ohne die Herkunft zu zerstören.
+  it('rührt einen langen Namen ohne Unterdomäne nicht an', () => {
+    const flat = 'averyveryverylongsingledomainname.example';
+    expect(shortenHost(flat)).toBe(flat);
+  });
+
+  it('gibt für nichts nichts zurück', () => {
+    expect(shortenHost(null)).toBeNull();
+    expect(shortenHost('')).toBeNull();
   });
 });
