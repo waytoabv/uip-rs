@@ -15,6 +15,71 @@ pub const BATCH_SIZE: i64 = 200;
 /// Auch ohne Signal wird regelmäßig nachgesehen (Backfill, verpasste Notifies).
 const IDLE_POLL: Duration = Duration::from_secs(2);
 
+/// Wie alt eine Bewertung werden darf, bevor sie neu erfragt wird.
+///
+/// AbuseIPDB bewertet die letzten 90 Tage; zwei Wochen sind kurz genug, dass
+/// eine Adresse, die auffällig geworden ist, auffällt, und lang genug, dass
+/// eine ruhige Adresse nicht ständig Kontingent kostet.
+const REFRESH_AFTER_DAYS: i64 = 14;
+
+/// Wie viele Auffrischungen an einem Tag höchstens.
+///
+/// Eine neue Adresse ist wichtiger als eine alte Bewertung: wer heute zum
+/// ersten Mal anklopft, soll bewertet werden, auch wenn zehntausend
+/// gespeicherte Einträge in die Jahre kommen. Deshalb ein Deckel, und ein
+/// kleiner — beim kostenlosen Kontingent von tausend Abfragen am Tag ist ein
+/// Fünftel für die Pflege genug.
+const DEFAULT_REFRESH_PER_DAY: u32 = 200;
+
+/// Der Tagesvorrat an Auffrischungen.
+///
+/// Zählt in Tagen seit der Epoche, nicht in Stunden seit dem Start: sonst
+/// verschöbe jeder Neustart den Stichtag, und ein Dienst, der oft neu startet,
+/// hätte jedes Mal wieder den vollen Vorrat.
+#[derive(Debug)]
+pub struct RefreshBudget {
+    day: std::sync::atomic::AtomicI64,
+    used: std::sync::atomic::AtomicU32,
+    per_day: std::sync::atomic::AtomicU32,
+}
+
+impl Default for RefreshBudget {
+    fn default() -> Self {
+        Self {
+            day: std::sync::atomic::AtomicI64::new(0),
+            used: std::sync::atomic::AtomicU32::new(0),
+            per_day: std::sync::atomic::AtomicU32::new(DEFAULT_REFRESH_PER_DAY),
+        }
+    }
+}
+
+impl RefreshBudget {
+    pub fn set_per_day(&self, n: u32) {
+        self.per_day.store(n, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Nimmt eine Auffrischung in Anspruch — oder lehnt ab, wenn der Tag
+    /// aufgebraucht ist.
+    fn take(&self) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let today = Utc::now().timestamp().div_euclid(86_400);
+        if self.day.swap(today, Relaxed) != today {
+            self.used.store(0, Relaxed);
+        }
+        let limit = self.per_day.load(Relaxed);
+        if limit == 0 {
+            return false;
+        }
+        // Kein compare_exchange nötig: der Worker ist eine einzige Aufgabe.
+        let used = self.used.load(Relaxed);
+        if used >= limit {
+            return false;
+        }
+        self.used.store(used + 1, Relaxed);
+        true
+    }
+}
+
 pub struct Sources {
     pub geo: Arc<dyn GeoSource>,
     pub rdns: Option<Arc<dyn RdnsSource>>,
@@ -25,6 +90,8 @@ pub struct Sources {
     /// wird, die Einstellung aber jederzeit umgelegt werden kann — ohne ihn
     /// hieße Abschalten, dass das Wiedereinschalten einen Neustart braucht.
     pub rdns_enabled: Arc<std::sync::atomic::AtomicBool>,
+    /// Was heute noch an Auffrischungen übrig ist.
+    pub refresh: Arc<RefreshBudget>,
 }
 
 /// Adressen, die uns selbst gehören und die niemand nachschlagen muss.
@@ -105,12 +172,18 @@ async fn claim(pool: &PgPool, excluded: &Exclusions, limit: i64) -> Result<Vec<C
 }
 
 /// Liest bekannte Fakten aus dem Cache, damit wir nichts doppelt nachschlagen.
-async fn cached_facts(pool: &PgPool, ips: &[IpAddr]) -> HashMap<IpAddr, IpFacts> {
+/// Bekannte Fakten — und welche Bewertungen alt genug für eine Auffrischung
+/// sind. Beides aus derselben Abfrage: der Zeitpunkt steht in derselben Zeile.
+async fn cached_facts(
+    pool: &PgPool,
+    ips: &[IpAddr],
+) -> (HashMap<IpAddr, IpFacts>, HashSet<IpAddr>) {
     let nets: Vec<IpNetwork> = ips.iter().copied().map(IpNetwork::from).collect();
     let rows = sqlx::query(
         r#"SELECT host(ip) AS ip, geo_country, geo_city, geo_lat, geo_lon,
                   asn_number, asn_name, rdns, threat_score, threat_categories,
-                  abuse_total_reports, abuse_last_reported, abuse_is_tor, abuse_usage_type
+                  abuse_total_reports, abuse_last_reported, abuse_is_tor, abuse_usage_type,
+                  abuse_looked_up_at
            FROM ip_enrichment WHERE ip = ANY($1)"#,
     )
     .bind(&nets)
@@ -118,10 +191,21 @@ async fn cached_facts(pool: &PgPool, ips: &[IpAddr]) -> HashMap<IpAddr, IpFacts>
     .await
     .unwrap_or_default();
 
-    rows.iter()
+    let cutoff = Utc::now() - chrono::Duration::days(REFRESH_AFTER_DAYS);
+    let mut stale: HashSet<IpAddr> = HashSet::new();
+
+    let facts = rows
+        .iter()
         .filter_map(|r| {
             let ip: String = r.get("ip");
             let ip: IpAddr = ip.parse().ok()?;
+            // Veraltet ist nur, was überhaupt eine Bewertung hat: eine Zeile
+            // ohne Score wird ohnehin gefragt, die braucht keinen Vorrat.
+            let checked: Option<DateTime<Utc>> = r.get("abuse_looked_up_at");
+            let score: Option<i32> = r.get("threat_score");
+            if score.is_some() && checked.is_none_or(|t| t < cutoff) {
+                stale.insert(ip);
+            }
             Some((
                 ip,
                 IpFacts {
@@ -141,7 +225,23 @@ async fn cached_facts(pool: &PgPool, ips: &[IpAddr]) -> HashMap<IpAddr, IpFacts>
                 },
             ))
         })
-        .collect()
+        .collect();
+    (facts, stale)
+}
+
+/// Hält fest, dass nachgefragt wurde — auch wenn nichts dabei herauskam.
+///
+/// Ohne das bliebe der alte Zeitpunkt stehen, die Adresse gälte weiter als
+/// veraltet, und jeder Durchlauf verbrauchte erneut einen Platz des
+/// Tagesvorrats für dieselbe Adresse.
+async fn touch_abuse_checked(pool: &PgPool, ip: IpAddr) {
+    let res = sqlx::query("UPDATE ip_enrichment SET abuse_looked_up_at = NOW() WHERE ip = $1")
+        .bind(IpNetwork::from(ip))
+        .execute(pool)
+        .await;
+    if let Err(e) = res {
+        tracing::debug!(error = %e, %ip, "could not record the refresh attempt");
+    }
 }
 
 async fn store_facts(pool: &PgPool, ip: IpAddr, f: &IpFacts) {
@@ -212,7 +312,7 @@ pub async fn run_once(
         .filter_map(|c| c.remote)
         .collect();
 
-    let mut facts = cached_facts(pool, &distinct).await;
+    let (mut facts, stale) = cached_facts(pool, &distinct).await;
     let mut quota_ran_out = false;
 
     for ip in &distinct {
@@ -225,11 +325,35 @@ pub async fn run_once(
                 known.rdns = rdns.lookup(*ip).await;
             }
         }
-        if wants_threat.contains(ip) && known.threat_score.is_none() {
+        // Eine Auffrischung nur, wenn die Adresse ohnehin gerade auftaucht,
+        // ihre Bewertung alt ist und der Tagesvorrat noch reicht. `take()` hat
+        // eine Wirkung, steht deshalb hinter allen anderen Bedingungen.
+        let refreshing = wants_threat.contains(ip)
+            && known.threat_score.is_some()
+            && stale.contains(ip)
+            && sources.refresh.take();
+
+        if wants_threat.contains(ip) && (known.threat_score.is_none() || refreshing) {
             match sources.threat.lookup(*ip).await {
+                // Bei einer Auffrischung ersetzen, nicht ergänzen: `merge`
+                // füllt nur Leerstellen, und die Bewertung ist gerade keine —
+                // der neue Wert käme sonst nie an.
+                ThreatOutcome::Found(t) if refreshing => {
+                    tracing::debug!(%ip, from = known.threat_score, to = t.threat_score, "refreshed");
+                    known.threat_score = t.threat_score;
+                    known.threat_categories = t.threat_categories;
+                    known.abuse_total_reports = t.abuse_total_reports;
+                    known.abuse_last_reported = t.abuse_last_reported;
+                    known.abuse_is_tor = t.abuse_is_tor;
+                    known.abuse_usage_type = t.abuse_usage_type;
+                }
                 ThreatOutcome::Found(t) => known.merge(t),
                 ThreatOutcome::QuotaExhausted => quota_ran_out = true,
-                ThreatOutcome::NotFound | ThreatOutcome::Disabled => {}
+                ThreatOutcome::NotFound | ThreatOutcome::Disabled => {
+                    if refreshing {
+                        touch_abuse_checked(pool, *ip).await;
+                    }
+                }
             }
         }
         if !known.is_empty() {
@@ -397,6 +521,15 @@ async fn apply_settings(pool: &PgPool, sources: &Sources) {
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
     sources.rdns_enabled.store(enabled, std::sync::atomic::Ordering::Relaxed);
+
+    // 0 schaltet die Auffrischung ab, ohne dass jemand Code ändern muss.
+    let per_day = uip_core::settings::get_config(pool, "abuseipdb_refresh_per_day")
+        .await
+        .and_then(|v| v.as_i64())
+        .filter(|n| (0..=100_000).contains(n))
+        .map(|n| n as u32)
+        .unwrap_or(DEFAULT_REFRESH_PER_DAY);
+    sources.refresh.set_per_day(per_day);
 }
 
 /// Hält den Kontingentstand dort fest, wo die API ihn findet.
@@ -505,6 +638,7 @@ mod tests {
             rdns: Some(Arc::new(FakeRdns)),
             threat: Arc::new(FakeThreat { outcome: threat }),
             rdns_enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            refresh: Arc::new(RefreshBudget::default()),
         };
         (geo, s)
     }
@@ -588,6 +722,72 @@ mod tests {
 
         run_once(&pool, &sources, &Exclusions::default(), 100, Some(&tx)).await.unwrap();
         assert!(rx.try_recv().is_err(), "keine Gegenstelle, kein Nachtrag");
+    }
+
+    /// Eine gespeicherte Bewertung altert. Taucht die Adresse wieder auf und
+    /// ist ihr Eintrag alt genug, wird neu gefragt — und der neue Wert muss
+    /// den alten *ersetzen*, nicht bloß Lücken füllen.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn an_old_score_is_asked_again_and_replaced(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO ip_enrichment (ip, threat_score, abuse_looked_up_at)
+             VALUES ('8.8.8.8', 12, NOW() - INTERVAL '30 days')",
+        ).execute(&pool).await.unwrap();
+        insert_row(&pool, 1, Some(1), Some(2), "8.8.8.8").await;
+
+        let (_geo, sources) = sources(ThreatOutcome::Found(IpFacts {
+            threat_score: Some(93),
+            ..Default::default()
+        }));
+        run_once(&pool, &sources, &Exclusions::default(), 100, None).await.unwrap();
+
+        let (score, checked): (Option<i32>, Option<DateTime<Utc>>) = sqlx::query_as(
+            "SELECT threat_score, abuse_looked_up_at FROM ip_enrichment WHERE ip = '8.8.8.8'",
+        ).fetch_one(&pool).await.unwrap();
+        assert_eq!(score, Some(93), "der neue Wert, nicht der alte");
+        assert!(checked.unwrap() > Utc::now() - chrono::Duration::minutes(1));
+    }
+
+    /// Eine frische Bewertung wird nicht angefasst — sonst kostete jede
+    /// wiederkehrende Adresse bei jedem Durchlauf eine Abfrage.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_recent_score_is_left_alone(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO ip_enrichment (ip, threat_score, abuse_looked_up_at)
+             VALUES ('8.8.8.8', 12, NOW() - INTERVAL '2 days')",
+        ).execute(&pool).await.unwrap();
+        insert_row(&pool, 1, Some(1), Some(2), "8.8.8.8").await;
+
+        let (_geo, sources) = sources(ThreatOutcome::Found(IpFacts {
+            threat_score: Some(93),
+            ..Default::default()
+        }));
+        run_once(&pool, &sources, &Exclusions::default(), 100, None).await.unwrap();
+
+        let score: Option<i32> = sqlx::query_scalar(
+            "SELECT threat_score FROM ip_enrichment WHERE ip = '8.8.8.8'",
+        ).fetch_one(&pool).await.unwrap();
+        assert_eq!(score, Some(12), "zwei Tage alt ist nicht alt");
+    }
+
+    /// Der Tagesvorrat ist der Schutz des Kontingents: zweiundvierzigtausend
+    /// alte Einträge dürfen die tausend Abfragen des Tages nicht aufbrauchen,
+    /// die eine neue Adresse braucht.
+    #[test]
+    fn the_daily_budget_runs_out_and_returns_the_next_day() {
+        let budget = RefreshBudget::default();
+        budget.set_per_day(2);
+        assert!(budget.take());
+        assert!(budget.take());
+        assert!(!budget.take(), "mehr gibt es heute nicht");
+
+        // Ein neuer Tag füllt ihn wieder auf.
+        budget.day.store(0, std::sync::atomic::Ordering::Relaxed);
+        assert!(budget.take());
+
+        // Und 0 schaltet die Auffrischung ganz ab.
+        budget.set_per_day(0);
+        assert!(!budget.take());
     }
 
     /// Der Punkt der ganzen Übung: was im Einstellungs-Dialog steht, wirkt im
@@ -696,6 +896,7 @@ mod tests {
             rdns: Some(Arc::new(FakeRdns)),
             threat: Arc::new(MultiThreat),
             rdns_enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            refresh: Arc::new(RefreshBudget::default()),
         };
 
         let n = run_once(&pool, &s, &Default::default(), 100, None).await.unwrap();

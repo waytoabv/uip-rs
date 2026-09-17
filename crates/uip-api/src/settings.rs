@@ -22,6 +22,7 @@ const ALLOWED: &[(&str, Kind)] = &[
     ("rdns_enabled", Kind::Bool),
     ("drop_syslog_traffic", Kind::Bool),
     ("abuseipdb_api_key", Kind::Secret),
+    ("abuseipdb_refresh_per_day", Kind::Number),
     ("geoip_dir", Kind::Text),
     ("maxmind_account_id", Kind::Text),
     ("maxmind_license_key", Kind::Secret),

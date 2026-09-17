@@ -96,7 +96,13 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::spawn(uip_enrich::run_worker(
         pool.clone(),
-        uip_enrich::Sources { geo, rdns, threat, rdns_enabled },
+        uip_enrich::Sources {
+            geo,
+            rdns,
+            threat,
+            rdns_enabled,
+            refresh: Arc::new(uip_enrich::worker::RefreshBudget::default()),
+        },
         uip_enrich::Exclusions(settings.exclusions()),
         wake_enricher,
         Some(event_tx.clone()),

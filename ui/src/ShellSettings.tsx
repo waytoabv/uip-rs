@@ -138,9 +138,16 @@ const SECTIONS: { title: string; note?: string; status?: string; fields: Field[]
   },
   {
     title: 'AbuseIPDB',
-    note: 'Threat scores, asked only for blocked firewall rows. The free tier allows 1,000 checks a day.',
+    note:
+      'Threat scores, asked only for blocked firewall rows. The free tier allows 1,000 checks a day. ' +
+      'A stored score is asked again once it is a fortnight old and its address turns up in the log — ' +
+      'but only so many times a day, so a backlog of old entries cannot spend the allowance a new ' +
+      'address needs. 0 turns refreshing off.',
     status: 'abuseipdb',
-    fields: [{ key: 'abuseipdb_api_key', label: 'API key', kind: 'secret' }],
+    fields: [
+      { key: 'abuseipdb_api_key', label: 'API key', kind: 'secret' },
+      { key: 'abuseipdb_refresh_per_day', label: 'Refresh budget', kind: 'number', hint: 'checks a day, default 200' },
+    ],
   },
   {
     title: 'Pi-hole',
