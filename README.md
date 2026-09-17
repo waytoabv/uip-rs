@@ -42,6 +42,23 @@ daily for a newer build, so the credentials can just as well be entered under
 Settings afterwards. Without them country and ASN stay empty and everything
 else works.
 
+## Coming from the fork
+
+`scripts/import-abuseipdb.sh` carries the AbuseIPDB results over. Those answers
+cost quota rather than money, but a thousand lookups a day goes quickly, and
+what the old instance already asked need not be asked again.
+
+```bash
+scripts/import-abuseipdb.sh --from-dsn postgres://unifi@old-host/unifi_logs
+```
+
+Where the old database sits in Docker with no exposed port, the script's
+`--help` prints the psql command to dump it to CSV instead, and takes that with
+`--from-csv`. `--backfill-logs` additionally fills in stored log rows that have
+no score yet, for the imported addresses only. Running it twice changes
+nothing: an entry is taken over only where none exists here or where the one
+here is older.
+
 ## Build
 
 The frontend is built first, then embedded into the `uip` binary via `rust-embed`
