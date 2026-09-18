@@ -353,8 +353,13 @@ const COLUMN_MAX: Record<string, number> = {
   proto: 60,
   service: 96,
   rule_info: 200,
-  abuseipdb: 88,
-  categories: 152,
+  // „ABUSEIPDB" sind neun Großbuchstaben mit Sperrung — bei 88 endete die
+  // Überschrift selbst im Auslassungszeichen, und eine Spalte, deren Name
+  // nicht dasteht, erklärt ihren Inhalt nicht mehr.
+  abuseipdb: 108,
+  // Ohne Schranke: als letzte Spalte verdrängt sie nichts, und die Kategorien
+  // eines Treffers sind die Begründung — abgeschnitten sagen sie wenig.
+  categories: Number.POSITIVE_INFINITY,
 };
 const MAX_COLUMN_FALLBACK = 240;
 
