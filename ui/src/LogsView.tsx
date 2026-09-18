@@ -287,7 +287,7 @@ function CategoriesCell(props: { categories: string[] | null }) {
   return (
     <Show when={text()} fallback={<span class="text-gray-500 dark:text-gray-400">—</span>}>
       <span
-        class="text-[11px] text-purple-600/70 dark:text-purple-400/70 truncate inline-block align-bottom max-w-full"
+        class="cell-wrap-2 text-[11px] leading-[1.35] text-purple-600/70 dark:text-purple-400/70"
         title={text() ?? undefined}
       >
         {text()}
@@ -357,11 +357,31 @@ const COLUMN_MAX: Record<string, number> = {
   // Überschrift selbst im Auslassungszeichen, und eine Spalte, deren Name
   // nicht dasteht, erklärt ihren Inhalt nicht mehr.
   abuseipdb: 108,
-  // Ohne Schranke: als letzte Spalte verdrängt sie nichts, und die Kategorien
-  // eines Treffers sind die Begründung — abgeschnitten sagen sie wenig.
-  categories: Number.POSITIVE_INFINITY,
+  // Die breiteste Spalte, aber nicht die einzige: ohne Schranke wuchs sie mit
+  // der längsten Liste der Seite auf über 600 Pixel, und die Tabelle damit auf
+  // das Doppelte der Fensterbreite — zwölf Spalten weit weg von der Zeile, zu
+  // der sie gehören. Über zwei Zeilen steht auch eine lange Liste vollständig
+  // da, und zwar dort, wo man sie liest.
+  categories: 420,
 };
 const MAX_COLUMN_FALLBACK = 240;
+
+/**
+ * Untergrenzen für Spalten, die auch einmal leer sein können.
+ *
+ * Gemessen wird eine Seite, nicht der Datenbestand: hat auf ihr keine Zeile
+ * eine ASN, ist die Spalte so breit wie das Wort „ASN" — und die erste Zeile
+ * aus dem Live-Strom, die eine hat, steht dann in 48 Pixeln. Diese Werte sind
+ * die Breite, die der übliche Inhalt braucht, nicht der längste.
+ */
+const COLUMN_MIN: Record<string, number> = {
+  source: 150,
+  destination: 150,
+  asn: 120,
+  network: 150,
+  rule_info: 130,
+  categories: 160,
+};
 
 /**
  * Eine Kopfzelle, so breit wie ihr Inhalt — und von Hand verstellbar.
@@ -474,6 +494,24 @@ export default function LogsView(props: { query: string }) {
     return `${sum}px`;
   };
 
+  /**
+   * Die Breite der Überschrift selbst, samt Innenabstand.
+   *
+   * Eine Obergrenze darunter ist keine: dann steht in der Spalte „COUN…", und
+   * eine Spalte, deren Name nicht dasteht, erklärt ihren Inhalt nicht mehr.
+   * Gemessen statt in der Liste oben mitgepflegt — die Werte hängen an
+   * Schriftart und Sperrung, und beide ändern sich, ohne dass jemand an diese
+   * Zahlen denkt.
+   */
+  const headingWidth = (th: HTMLElement) => {
+    const range = document.createRange();
+    range.selectNodeContents(th);
+    let text = 0;
+    for (const rect of range.getClientRects()) text = Math.max(text, rect.width);
+    const style = getComputedStyle(th);
+    return Math.ceil(text + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight));
+  };
+
   const measureColumns = () => {
     if (!tableRef) return;
     const next: Record<string, number> = {};
@@ -481,8 +519,10 @@ export default function LogsView(props: { query: string }) {
       const key = th.dataset.col;
       if (!key) continue;
       const w = Math.round(th.getBoundingClientRect().width);
-      const cap = COLUMN_MAX[key] ?? MAX_COLUMN_FALLBACK;
-      if (w > 0) next[key] = Math.min(cap, Math.max(MIN_COLUMN, w));
+      const heading = headingWidth(th);
+      const cap = Math.max(COLUMN_MAX[key] ?? MAX_COLUMN_FALLBACK, heading);
+      const min = Math.min(cap, Math.max(COLUMN_MIN[key] ?? MIN_COLUMN, heading));
+      if (w > 0) next[key] = Math.min(cap, Math.max(min, w));
     }
     if (Object.keys(next).length) setMeasured(next);
   };
@@ -716,7 +756,7 @@ export default function LogsView(props: { query: string }) {
             umzubauen. Davor `auto`, damit überhaupt etwas zu messen ist. */}
         <table
           ref={tableRef}
-          style={{ width: tableWidth() }}
+          style={{ width: tableWidth(), 'min-width': tableWidth() }}
           class={`log-table text-left border-collapse ${
             Object.keys(measured()).length ? 'table-fixed' : 'w-max'
           }`}
