@@ -8,7 +8,7 @@ use sqlx::{PgPool, Row};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::error::ApiError;
-use crate::filters::LogFilter;
+use crate::filters::{Joins, LogFilter};
 
 #[derive(Deserialize)]
 pub struct SankeyQuery {
@@ -80,7 +80,7 @@ pub async fn get_sankey(
                 COUNT(*) AS cnt, COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked_cnt
          FROM logs l ",
     );
-    q.filter.push_joins(&mut qb);
+    q.filter.push_joins(&mut qb, Joins::NONE.protocols());
     q.filter.push_where(&mut qb);
     qb.push(" AND l.log_type_id = 1 AND l.src_ip IS NOT NULL AND l.dst_ip IS NOT NULL");
     qb.push(" GROUP BY l.src_ip, l.dst_ip, l.dst_port, pr.name");
@@ -167,7 +167,7 @@ pub async fn get_zones(
                 COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked
          FROM logs l ",
     );
-    f.push_joins(&mut qb);
+    f.push_joins(&mut qb, Joins::NONE.interfaces());
     f.push_where(&mut qb);
     qb.push(" AND l.iface_in_id IS NOT NULL AND l.iface_out_id IS NOT NULL");
     qb.push(" GROUP BY ii.name, io.name");

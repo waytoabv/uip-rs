@@ -14,7 +14,7 @@
 //! least 100,000" (`exact: false`) rather than paying for the full scan.
 
 use crate::error::ApiError;
-use crate::filters::LogFilter;
+use crate::filters::{Joins, LogFilter};
 use axum::extract::{Query, State};
 use axum::Json;
 use serde_json::{json, Value};
@@ -35,7 +35,7 @@ pub async fn get_count(
     }
 
     let mut qb = sqlx::QueryBuilder::new("SELECT count(*) FROM (SELECT 1 FROM logs l ");
-    filter.push_joins(&mut qb);
+    filter.push_joins(&mut qb, Joins::NONE);
     filter.push_where(&mut qb);
     qb.push(" LIMIT ").push_bind(CAP).push(") t");
     let capped: i64 = qb.build_query_scalar().fetch_one(&pool).await?;

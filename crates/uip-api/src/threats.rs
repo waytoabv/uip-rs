@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 
 use crate::error::ApiError;
-use crate::filters::LogFilter;
+use crate::filters::{Joins, LogFilter};
 
 pub async fn get_points(
     State(pool): State<PgPool>,
@@ -24,7 +24,7 @@ pub async fn get_points(
                 host(MAX(l.src_ip)) AS sample_ip
          FROM logs l ",
     );
-    f.push_joins(&mut points_qb);
+    f.push_joins(&mut points_qb, Joins::NONE);
     f.push_where(&mut points_qb);
     points_qb.push(
         " AND l.log_type_id = 1 AND l.rule_action_id = 2 \
@@ -40,7 +40,7 @@ pub async fn get_points(
     // Verkehr" und "blockierter Verkehr, aber noch nicht angereichert" sehen
     // sonst identisch aus.
     let mut total_qb = sqlx::QueryBuilder::new("SELECT COUNT(*) FROM logs l ");
-    f.push_joins(&mut total_qb);
+    f.push_joins(&mut total_qb, Joins::NONE);
     f.push_where(&mut total_qb);
     total_qb.push(" AND l.log_type_id = 1 AND l.rule_action_id = 2");
 

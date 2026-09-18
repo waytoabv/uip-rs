@@ -141,16 +141,22 @@ suite('defaultFilters — womit die Ansicht startet', () => {
     expect(d.direction).toBe('inbound,outbound,inter_vlan');
   });
 
-  it('lässt alles andere offen — kein Zeitraum, keine Suche', () => {
+  it('beginnt mit einem Zeitfenster — sonst fragt jede Auswertung den ganzen Bestand ab', () => {
+    // Ohne Fenster liest das Dashboard bei über einer Million Zeilen am Tag
+    // alles, was die Aufbewahrungsfrist noch hält, und wird mit jedem Tag
+    // langsamer. Als Pille steht es da und ist erweiterbar.
+    expect(defaultFilters().range).toBe('24h');
+  });
+
+  it('lässt alles andere offen — keine Suche, kein Land', () => {
     const d = defaultFilters();
-    expect(d.range).toBe('');
     expect(d.q).toBe('');
     expect(d.country).toBe('');
   });
 
-  it('erzeugt genau diese drei Parameter und sonst nichts', () => {
+  it('erzeugt genau diese vier Parameter und sonst nichts', () => {
     const params = new URLSearchParams(toQuery(defaultFilters()));
-    expect([...params.keys()].sort()).toEqual(['action', 'direction', 'log_type']);
+    expect([...params.keys()].sort()).toEqual(['action', 'direction', 'log_type', 'range']);
   });
 
   // Die Vorauswahl ist eine Auswahl, keine Sperre: jede Pille lässt sich

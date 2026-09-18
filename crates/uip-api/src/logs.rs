@@ -1,5 +1,5 @@
 use crate::error::ApiError;
-use crate::filters::LogFilter;
+use crate::filters::{Joins, LogFilter};
 use axum::extract::{Query, State};
 use axum::Json;
 use chrono::{DateTime, TimeZone, Utc};
@@ -45,7 +45,7 @@ pub async fn get_logs(
                 pr.name AS protocol, dn.name AS hostname, sv.name AS service_name
          FROM logs l ",
     );
-    q.filter.push_joins(&mut qb);
+    q.filter.push_joins(&mut qb, Joins::ALL);
     // Not part of LogFilter::push_joins: only this endpoint's output needs
     // the service name, and export.rs/dashboard.rs etc. share push_joins.
     qb.push(" LEFT JOIN services sv ON sv.port = l.dst_port AND sv.proto = lower(pr.name) ");

@@ -55,6 +55,13 @@ export function defaultFilters(): FilterState {
     log_type: 'firewall',
     action: 'allow,block',
     direction: 'inbound,outbound,inter_vlan',
+    // Ohne Zeitfenster fragt jede Auswertung den ganzen Bestand ab. Bei
+    // reichlich einer Million Zeilen am Tag heißt das: das Dashboard wird mit
+    // jedem Tag langsamer, bis die Aufbewahrungsfrist greift — und niemand
+    // liest eine Top-Liste über sechzig Tage, um zu sehen, was gerade
+    // passiert. Vierundzwanzig Stunden stehen als Pille da und sind mit einem
+    // Klick auf 7d oder 30d erweitert.
+    range: '24h',
   };
 }
 

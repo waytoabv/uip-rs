@@ -123,6 +123,82 @@ fn range_start(range: &str) -> Option<DateTime<Utc>> {
     Some(Utc::now() - d)
 }
 
+/// Welche Nachschlagetabellen eine Abfrage braucht.
+///
+/// Die Log-Zeile trägt Fremdschlüssel statt Namen — wer `r.name` oder
+/// `ii.name` auswählt, braucht den Join dazu. Wer nur zählt, braucht keinen.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Joins {
+    pub rules: bool,
+    pub interfaces: bool,
+    pub protocols: bool,
+    pub hostnames: bool,
+    /// Gerätenamen aus dem Controller. Vier Joins über Adressen — nur die
+    /// Zeilenliste zeigt sie, und nur sie sollte dafür zahlen.
+    pub devices: bool,
+}
+
+impl Joins {
+    pub const NONE: Self = Self {
+        rules: false,
+        interfaces: false,
+        protocols: false,
+        hostnames: false,
+        devices: false,
+    };
+    pub const ALL: Self = Self {
+        rules: true,
+        interfaces: true,
+        protocols: true,
+        hostnames: true,
+        devices: true,
+    };
+
+    pub const fn rules(mut self) -> Self {
+        self.rules = true;
+        self
+    }
+    pub const fn interfaces(mut self) -> Self {
+        self.interfaces = true;
+        self
+    }
+    pub const fn protocols(mut self) -> Self {
+        self.protocols = true;
+        self
+    }
+    pub const fn hostnames(mut self) -> Self {
+        self.hostnames = true;
+        self
+    }
+
+    fn or(self, other: Self) -> Self {
+        Self {
+            rules: self.rules || other.rules,
+            interfaces: self.interfaces || other.interfaces,
+            protocols: self.protocols || other.protocols,
+            hostnames: self.hostnames || other.hostnames,
+            devices: self.devices || other.devices,
+        }
+    }
+}
+
+/// Die Tabellen, die ein Suchbegriff anfasst. Ein Begriff ohne Feldangabe
+/// sucht in allem, was Text ist — und das steht zum Teil in den
+/// Nachschlagetabellen.
+fn term_joins(term: &Term) -> Joins {
+    match (&term.value, term.field) {
+        (Value::Text(_), Some(Field::Action) | Some(Field::LogType)) => Joins::NONE,
+        (Value::Text(_), Some(Field::Rule)) => Joins::NONE.rules(),
+        (Value::Text(_), Some(Field::Protocol)) => Joins::NONE.protocols(),
+        (Value::Text(_), Some(Field::Interface)) => Joins::NONE.interfaces(),
+        (Value::Text(_), Some(Field::Host)) => Joins::NONE.hostnames(),
+        (Value::Text(_), Some(Field::Country) | Some(Field::Asn)) => Joins::NONE,
+        // Ohne Feldangabe wird überall gesucht.
+        (Value::Text(_), None) => Joins::NONE.rules().interfaces().protocols().hostnames(),
+        _ => Joins::NONE,
+    }
+}
+
 impl LogFilter {
     /// True wenn kein einziges Feld gesetzt ist — der Fall, in dem
     /// `/api/logs/count` auf `approximate_row_count` statt auf ein echtes
@@ -145,19 +221,59 @@ impl LogFilter {
             && self.q.is_none()
     }
 
-    /// Die Joins, die Filter und Ausgabe gemeinsam brauchen.
-    pub fn push_joins(&self, qb: &mut QueryBuilder<'_, Postgres>) {
-        qb.push(
-            " LEFT JOIN rules r ON r.id = l.rule_id \
-              LEFT JOIN interfaces ii ON ii.id = l.iface_in_id \
-              LEFT JOIN interfaces io ON io.id = l.iface_out_id \
-              LEFT JOIN protocols pr ON pr.id = l.protocol_id \
-              LEFT JOIN device_names dn ON dn.id = l.hostname_id \
-              LEFT JOIN unifi_clients ucs ON ucs.ip = l.src_ip \
-              LEFT JOIN unifi_clients ucd ON ucd.ip = l.dst_ip \
-              LEFT JOIN unifi_devices uds ON uds.ip = l.src_ip \
-              LEFT JOIN unifi_devices udd ON udd.ip = l.dst_ip ",
-        );
+    /// Welche Nachschlagetabellen dieser Filter selbst braucht.
+    ///
+    /// Ein Filter auf `proto:udp` vergleicht `pr.name` — ohne den Join stünde
+    /// dort kein Name. Umgekehrt braucht ein Zählen nach Richtung keine
+    /// einzige davon.
+    fn needed_joins(&self) -> Joins {
+        let mut needs = Joins::NONE;
+        if !self.iface.is_empty() || self.iface_in.is_some() || self.iface_out.is_some() {
+            needs.interfaces = true;
+        }
+        if !self.proto.is_empty() {
+            needs.protocols = true;
+        }
+        for term in self.q.as_deref().map(parse_search).unwrap_or_default() {
+            needs = needs.or(term_joins(&term));
+        }
+        needs
+    }
+
+    /// Die Joins für diese Abfrage: was der Filter braucht, dazu was die
+    /// Ausgabe verlangt.
+    ///
+    /// Früher standen hier immer alle neun — auch unter einem `COUNT(*)`, das
+    /// keine einzige Spalte daraus liest. Vier davon verbinden über
+    /// IP-Adressen (`unifi_clients`, `unifi_devices`); über drei Millionen
+    /// Zeilen kostet das ein Vielfaches der Zählung selbst. Gemessen an einer
+    /// Kopie des Bestands: `COUNT(DISTINCT src_ip)` fiel von 530 auf 90
+    /// Millisekunden, die Top-Listen etwa auf die Hälfte.
+    pub fn push_joins(&self, qb: &mut QueryBuilder<'_, Postgres>, extra: Joins) {
+        let needs = self.needed_joins().or(extra);
+        if needs.rules {
+            qb.push(" LEFT JOIN rules r ON r.id = l.rule_id ");
+        }
+        if needs.interfaces {
+            qb.push(
+                " LEFT JOIN interfaces ii ON ii.id = l.iface_in_id \
+                  LEFT JOIN interfaces io ON io.id = l.iface_out_id ",
+            );
+        }
+        if needs.protocols {
+            qb.push(" LEFT JOIN protocols pr ON pr.id = l.protocol_id ");
+        }
+        if needs.hostnames {
+            qb.push(" LEFT JOIN device_names dn ON dn.id = l.hostname_id ");
+        }
+        if needs.devices {
+            qb.push(
+                " LEFT JOIN unifi_clients ucs ON ucs.ip = l.src_ip \
+                  LEFT JOIN unifi_clients ucd ON ucd.ip = l.dst_ip \
+                  LEFT JOIN unifi_devices uds ON uds.ip = l.src_ip \
+                  LEFT JOIN unifi_devices udd ON udd.ip = l.dst_ip ",
+            );
+        }
     }
 
     pub fn push_where(&self, qb: &mut QueryBuilder<'_, Postgres>) {
@@ -351,7 +467,7 @@ mod tests {
     /// Wendet einen Filter an und gibt die Quell-Adressen der Treffer zurück.
     async fn matching(pool: &sqlx::PgPool, f: &LogFilter) -> Vec<String> {
         let mut qb = sqlx::QueryBuilder::new("SELECT host(l.src_ip) AS src FROM logs l ");
-        f.push_joins(&mut qb);
+        f.push_joins(&mut qb, Joins::ALL);
         f.push_where(&mut qb);
         qb.push(" ORDER BY l.timestamp DESC");
         qb.build_query_scalar::<Option<String>>()

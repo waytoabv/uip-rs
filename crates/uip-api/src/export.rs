@@ -1,5 +1,5 @@
 use crate::error::ApiError;
-use crate::filters::LogFilter;
+use crate::filters::{Joins, LogFilter};
 use axum::body::Body;
 use axum::extract::{Query, State};
 use axum::http::{header, Response, StatusCode};
@@ -35,7 +35,7 @@ pub async fn export_csv(
                 l.dns_query, l.dhcp_event, l.wifi_event
          FROM logs l ",
     );
-    filter.push_joins(&mut qb);
+    filter.push_joins(&mut qb, Joins::ALL);
     filter.push_where(&mut qb);
     qb.push(" ORDER BY l.timestamp DESC LIMIT 100000");
     let rows = qb.build().fetch_all(&pool).await?;

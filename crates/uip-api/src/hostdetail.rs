@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 
 use crate::error::ApiError;
-use crate::filters::LogFilter;
+use crate::filters::{Joins, LogFilter};
 
 #[derive(Deserialize)]
 pub struct HostQuery {
@@ -55,7 +55,7 @@ pub async fn get_host_detail(
                 max(l.geo_city) AS geo_city,
                 max(l.threat_score) AS max_threat
          FROM logs l ");
-    q.filter.push_joins(&mut qb);
+    q.filter.push_joins(&mut qb, Joins::NONE);
     q.filter.push_where(&mut qb);
     push_host(&mut qb, &net);
     let s = qb.build().fetch_one(&pool).await?;
@@ -81,7 +81,7 @@ pub async fn get_host_detail(
             count(*)::bigint AS total,
             count(*) FILTER (WHERE l.rule_action_id = 2)::bigint AS blocked
          FROM logs l ");
-    q.filter.push_joins(&mut qb);
+    q.filter.push_joins(&mut qb, Joins::NONE);
     q.filter.push_where(&mut qb);
     push_host(&mut qb, &net);
     qb.push(" AND l.src_ip IS NOT NULL AND l.dst_ip IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 10");
@@ -103,7 +103,7 @@ pub async fn get_host_detail(
                 count(*) FILTER (WHERE l.rule_action_id = 2)::bigint AS blocked
          FROM logs l ",
     );
-    q.filter.push_joins(&mut qb);
+    q.filter.push_joins(&mut qb, Joins::NONE.protocols());
     qb.push(" LEFT JOIN services sv ON sv.port = l.dst_port AND sv.proto = lower(pr.name) ");
     q.filter.push_where(&mut qb);
     push_host(&mut qb, &net);
@@ -128,7 +128,7 @@ pub async fn get_host_detail(
     let mut qb = sqlx::QueryBuilder::new(
         "SELECT r.name AS rule, count(*)::bigint AS total FROM logs l ",
     );
-    q.filter.push_joins(&mut qb);
+    q.filter.push_joins(&mut qb, Joins::NONE.rules());
     q.filter.push_where(&mut qb);
     push_host(&mut qb, &net);
     qb.push(" AND r.name IS NOT NULL GROUP BY r.name ORDER BY 2 DESC LIMIT 8");

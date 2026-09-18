@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod count;
 pub mod dashboard;
 pub mod error;
@@ -26,6 +27,8 @@ use uip_core::LiveEvent;
 pub struct ApiState {
     pub pool: PgPool,
     pub events: broadcast::Sender<LiveEvent>,
+    /// Die zuletzt gegebenen Antworten der Aggregat-Endpunkte (siehe `cache`).
+    pub cache: std::sync::Arc<cache::ResponseCache>,
 }
 
 impl axum::extract::FromRef<ApiState> for PgPool {
@@ -34,8 +37,12 @@ impl axum::extract::FromRef<ApiState> for PgPool {
 impl axum::extract::FromRef<ApiState> for broadcast::Sender<LiveEvent> {
     fn from_ref(s: &ApiState) -> broadcast::Sender<LiveEvent> { s.events.clone() }
 }
+impl axum::extract::FromRef<ApiState> for std::sync::Arc<cache::ResponseCache> {
+    fn from_ref(s: &ApiState) -> std::sync::Arc<cache::ResponseCache> { s.cache.clone() }
+}
 
 pub fn router(pool: PgPool, events: broadcast::Sender<LiveEvent>) -> Router {
+    let state = ApiState { pool, events, cache: cache::ResponseCache::new() };
     Router::new()
         .route("/api/health", get(|| async { "ok" }))
         .route("/api/status", get(status::get_status))
@@ -58,5 +65,6 @@ pub fn router(pool: PgPool, events: broadcast::Sender<LiveEvent>) -> Router {
         .route("/api/flows/zones", get(flows::get_zones))
         .route("/api/flows/host-detail", get(hostdetail::get_host_detail))
         .fallback(static_files::serve)
-        .with_state(ApiState { pool, events })
+        .layer(axum::middleware::from_fn_with_state(state.clone(), cache::layer))
+        .with_state(state)
 }

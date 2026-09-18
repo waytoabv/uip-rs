@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 
 use crate::error::ApiError;
-use crate::filters::LogFilter;
+use crate::filters::{Joins, LogFilter};
 
 const LOG_TYPES: [&str; 5] = ["firewall", "dns", "dhcp", "wifi", "system"];
 
@@ -30,56 +30,74 @@ fn direction_name(id: i16) -> Option<&'static str> {
     DIRECTIONS.get((id as usize).checked_sub(1)?).copied()
 }
 
-/// `total`/`allowed`/`blocked` in einer Abfrage — sie teilen sich ohnehin
-/// dieselben Joins und dasselbe WHERE, ein `COUNT(*) FILTER` je Bedingung ist
-/// billiger als drei getrennte Scans.
-async fn fetch_counts(pool: &PgPool, f: &LogFilter) -> Result<(i64, i64, i64), sqlx::Error> {
+/// Alles, was sich zählen lässt, in einem einzigen Durchgang.
+///
+/// Vorher waren das fünf Abfragen: Summe, nach Typ, nach Richtung, nach
+/// Bedrohung, und die Zahl der Quellen. Jede davon las dieselben Millionen
+/// Zeilen noch einmal. Nebenläufig ausgeführt sah das kurz aus, war aber
+/// fünfmal dieselbe Arbeit auf einem Gerät mit zwei Kernen — gemessen an einer
+/// Kopie des Bestands: 1,1 Sekunden Rechenzeit für etwas, das in 0,35 zu haben
+/// ist.
+///
+/// `GROUPING SETS` liefert dieselben drei Ebenen aus einem Scan: die Summe
+/// (die leere Menge), die Aufteilung nach Typ und die nach Richtung.
+/// `GROUPING()` sagt, welche Zeile welche Ebene ist — ohne das wäre ein
+/// NULL-Schlüssel nicht von „über alle Werte hinweg" zu unterscheiden.
+struct Totals {
+    total: i64,
+    allowed: i64,
+    blocked: i64,
+    threats: i64,
+    by_type: Vec<(i16, i64)>,
+    /// Zeilen ohne Richtung stehen unter ihrem eigenen NULL-Schlüssel und
+    /// werden vom Aufrufer verworfen — sie sind nicht getaggt, keine siebte
+    /// Richtung.
+    by_direction: Vec<(Option<i16>, i64)>,
+}
+
+async fn fetch_totals(pool: &PgPool, f: &LogFilter) -> Result<Totals, sqlx::Error> {
     let mut qb = sqlx::QueryBuilder::new(
-        "SELECT COUNT(*) AS total,
+        "SELECT GROUPING(l.log_type_id) AS g_type, GROUPING(l.direction_id) AS g_dir,
+                l.log_type_id, l.direction_id,
+                COUNT(*) AS n,
                 COUNT(*) FILTER (WHERE l.rule_action_id = 1) AS allowed,
-                COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked
+                COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked,
+                COUNT(*) FILTER (WHERE l.threat_score >= 50) AS threats
          FROM logs l ",
     );
-    f.push_joins(&mut qb);
+    f.push_joins(&mut qb, Joins::NONE);
     f.push_where(&mut qb);
-    let row = qb.build().fetch_one(pool).await?;
-    Ok((row.get("total"), row.get("allowed"), row.get("blocked")))
-}
+    qb.push(" GROUP BY GROUPING SETS ((), (l.log_type_id), (l.direction_id))");
 
-async fn fetch_by_type(pool: &PgPool, f: &LogFilter) -> Result<Vec<(i16, i64)>, sqlx::Error> {
-    let mut qb = sqlx::QueryBuilder::new("SELECT l.log_type_id, COUNT(*) AS n FROM logs l ");
-    f.push_joins(&mut qb);
-    f.push_where(&mut qb);
-    qb.push(" GROUP BY l.log_type_id");
-    let rows = qb.build().fetch_all(pool).await?;
-    Ok(rows.iter().map(|r| (r.get("log_type_id"), r.get("n"))).collect())
-}
-
-/// Rows with a NULL `direction_id` are counted in the GROUP BY under their
-/// own NULL group but dropped by the caller — they simply aren't tagged with
-/// a direction yet, not a fake seventh key.
-async fn fetch_by_direction(pool: &PgPool, f: &LogFilter) -> Result<Vec<(Option<i16>, i64)>, sqlx::Error> {
-    let mut qb = sqlx::QueryBuilder::new("SELECT l.direction_id, COUNT(*) AS n FROM logs l ");
-    f.push_joins(&mut qb);
-    f.push_where(&mut qb);
-    qb.push(" GROUP BY l.direction_id");
-    let rows = qb.build().fetch_all(pool).await?;
-    Ok(rows.iter().map(|r| (r.get("direction_id"), r.get("n"))).collect())
+    let mut out = Totals {
+        total: 0,
+        allowed: 0,
+        blocked: 0,
+        threats: 0,
+        by_type: Vec::new(),
+        by_direction: Vec::new(),
+    };
+    for r in qb.build().fetch_all(pool).await? {
+        let n: i64 = r.get("n");
+        match (r.get::<i32, _>("g_type"), r.get::<i32, _>("g_dir")) {
+            (1, 1) => {
+                out.total = n;
+                out.allowed = r.get("allowed");
+                out.blocked = r.get("blocked");
+                out.threats = r.get("threats");
+            }
+            (0, _) => out.by_type.push((r.get("log_type_id"), n)),
+            (_, 0) => out.by_direction.push((r.get("direction_id"), n)),
+            _ => {}
+        }
+    }
+    Ok(out)
 }
 
 async fn fetch_unique_sources(pool: &PgPool, f: &LogFilter) -> Result<i64, sqlx::Error> {
     let mut qb = sqlx::QueryBuilder::new("SELECT COUNT(DISTINCT l.src_ip) AS n FROM logs l ");
-    f.push_joins(&mut qb);
+    f.push_joins(&mut qb, Joins::NONE);
     f.push_where(&mut qb);
-    let row = qb.build().fetch_one(pool).await?;
-    Ok(row.get("n"))
-}
-
-async fn fetch_threats(pool: &PgPool, f: &LogFilter) -> Result<i64, sqlx::Error> {
-    let mut qb = sqlx::QueryBuilder::new("SELECT COUNT(*) AS n FROM logs l ");
-    f.push_joins(&mut qb);
-    f.push_where(&mut qb);
-    qb.push(" AND l.threat_score >= 50");
     let row = qb.build().fetch_one(pool).await?;
     Ok(row.get("n"))
 }
@@ -88,34 +106,33 @@ pub async fn get_stats(
     State(pool): State<PgPool>,
     Query(f): Query<LogFilter>,
 ) -> Result<Json<Value>, ApiError> {
-    // Fünf unabhängige Aggregate über denselben Pool (zehn Verbindungen) —
-    // nacheinander ausgeführt würden sich ihre Laufzeiten addieren.
-    let ((total, allowed, blocked), by_type_rows, by_direction_rows, unique_sources, threats) = tokio::try_join!(
-        fetch_counts(&pool, &f),
-        fetch_by_type(&pool, &f),
-        fetch_by_direction(&pool, &f),
-        fetch_unique_sources(&pool, &f),
-        fetch_threats(&pool, &f),
-    )?;
+    // Zwei Abfragen: alles Zählbare in einem Durchgang, und die Zahl der
+    // verschiedenen Quellen. Die bleibt für sich — ein `COUNT(DISTINCT)` neben
+    // den Gruppierungsebenen zwingt Postgres, die Adressen für jede Ebene
+    // erneut zu sortieren, und kostet dann mehr als der eigene Scan.
+    let (totals, unique_sources) =
+        tokio::try_join!(fetch_totals(&pool, &f), fetch_unique_sources(&pool, &f))?;
 
-    let by_type: serde_json::Map<String, Value> = by_type_rows
+    let by_type: serde_json::Map<String, Value> = totals
+        .by_type
         .into_iter()
         .filter_map(|(id, n)| log_type_name(id).map(|name| (name.to_string(), json!(n))))
         .collect();
 
-    let by_direction: serde_json::Map<String, Value> = by_direction_rows
+    let by_direction: serde_json::Map<String, Value> = totals
+        .by_direction
         .into_iter()
         .filter_map(|(id, n)| id.and_then(direction_name).map(|name| (name.to_string(), json!(n))))
         .collect();
 
     Ok(Json(json!({
-        "total": total,
-        "blocked": blocked,
-        "allowed": allowed,
+        "total": totals.total,
+        "blocked": totals.blocked,
+        "allowed": totals.allowed,
         "by_type": Value::Object(by_type),
         "by_direction": Value::Object(by_direction),
         "unique_sources": unique_sources,
-        "threats": threats,
+        "threats": totals.threats,
     })))
 }
 
@@ -175,7 +192,7 @@ pub async fn get_series(
                 COUNT(*) FILTER (WHERE l.rule_action_id = 3) AS redirect
          FROM logs l ",
     );
-    f.push_joins(&mut qb);
+    f.push_joins(&mut qb, Joins::NONE);
     f.push_where(&mut qb);
     qb.push(" GROUP BY bucket ORDER BY bucket");
     let rows = qb.build().fetch_all(&pool).await?;
@@ -232,7 +249,7 @@ pub async fn get_top(
                         COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked
                  FROM logs l ",
             );
-            f.push_joins(&mut qb);
+            f.push_joins(&mut qb, Joins::NONE);
             f.push_where(&mut qb);
             qb.push(" AND l.geo_country IS NOT NULL GROUP BY l.geo_country ORDER BY n DESC LIMIT ");
             qb.push_bind(limit);
@@ -255,7 +272,7 @@ pub async fn get_top(
                         MAX(l.asn_name) AS asn
                  FROM logs l "
             ));
-            f.push_joins(&mut qb);
+            f.push_joins(&mut qb, Joins::NONE);
             f.push_where(&mut qb);
             qb.push(format!(" AND l.{col} IS NOT NULL GROUP BY l.{col} ORDER BY n DESC LIMIT "));
             qb.push_bind(limit);
@@ -277,7 +294,7 @@ pub async fn get_top(
                         COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked
                  FROM logs l ",
             );
-            f.push_joins(&mut qb);
+            f.push_joins(&mut qb, Joins::NONE);
             f.push_where(&mut qb);
             qb.push(" AND l.dst_port IS NOT NULL GROUP BY l.dst_port ORDER BY n DESC LIMIT ");
             qb.push_bind(limit);
@@ -297,7 +314,7 @@ pub async fn get_top(
                 "SELECT l.rule_id AS id, r.name AS name, r.descr AS descr, COUNT(*) AS n
                  FROM logs l ",
             );
-            f.push_joins(&mut qb);
+            f.push_joins(&mut qb, Joins::NONE.rules());
             f.push_where(&mut qb);
             qb.push(" AND l.rule_id IS NOT NULL GROUP BY l.rule_id, r.name, r.descr ORDER BY n DESC LIMIT ");
             qb.push_bind(limit);
@@ -314,30 +331,26 @@ pub async fn get_top(
                 .collect()
         }
         Some("interfaces") => {
-            // Eine Zeile trägt zu ihrer Eingangs- *und* ihrer Ausgangs-
-            // Schnittstelle bei, wenn beide bekannt sind — ein UNION über
-            // beide Rollen, aggregiert je Name.
-            // SUM(bigint) yields NUMERIC in Postgres, not bigint — cast back
-            // so sqlx can decode the outer sums as i64 like everywhere else.
-            let mut qb =
-                sqlx::QueryBuilder::new("SELECT name, SUM(n)::bigint AS n, SUM(blocked)::bigint AS blocked FROM (");
-            qb.push(
-                "SELECT ii.name AS name, COUNT(*) AS n,
-                        COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked
-                 FROM logs l ",
+            // Eine Zeile zählt für ihre Eingangs- *und* ihre Ausgangs-
+            // Schnittstelle. Früher waren das zwei Abfragen mit `UNION ALL`,
+            // also zwei Durchgänge durch dieselben Millionen Zeilen; zwei
+            // Gruppierungsebenen holen beides aus einem. `GROUPING()` trennt
+            // die Ebenen — ohne das wäre die Eingangs-Spalte in den Zeilen der
+            // Ausgangs-Ebene schlicht NULL und nicht davon zu unterscheiden,
+            // dass die Schnittstelle unbekannt ist.
+            let mut qb = sqlx::QueryBuilder::new(
+                "SELECT name, SUM(n)::bigint AS n, SUM(blocked)::bigint AS blocked FROM (
+                   SELECT CASE WHEN GROUPING(l.iface_in_id) = 0 THEN ii.name ELSE io.name END AS name,
+                          COUNT(*) AS n,
+                          COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked
+                   FROM logs l ",
             );
-            f.push_joins(&mut qb);
+            f.push_joins(&mut qb, Joins::NONE.interfaces());
             f.push_where(&mut qb);
-            qb.push(" AND ii.name IS NOT NULL GROUP BY ii.name UNION ALL ");
             qb.push(
-                "SELECT io.name AS name, COUNT(*) AS n,
-                        COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked
-                 FROM logs l ",
+                " GROUP BY GROUPING SETS ((l.iface_in_id, ii.name), (l.iface_out_id, io.name))
+                 ) t WHERE name IS NOT NULL GROUP BY name ORDER BY n DESC LIMIT ",
             );
-            f.push_joins(&mut qb);
-            f.push_where(&mut qb);
-            qb.push(" AND io.name IS NOT NULL GROUP BY io.name");
-            qb.push(") t GROUP BY name ORDER BY n DESC LIMIT ");
             qb.push_bind(limit);
             qb.build()
                 .fetch_all(&pool)
@@ -357,7 +370,7 @@ pub async fn get_top(
                         COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked
                  FROM logs l ",
             );
-            f.push_joins(&mut qb);
+            f.push_joins(&mut qb, Joins::NONE);
             f.push_where(&mut qb);
             qb.push(" AND l.asn_number IS NOT NULL GROUP BY l.asn_number, l.asn_name ORDER BY n DESC LIMIT ");
             qb.push_bind(limit);
@@ -381,7 +394,7 @@ pub async fn get_top(
                         MAX(l.geo_country) AS country
                  FROM logs l ",
             );
-            f.push_joins(&mut qb);
+            f.push_joins(&mut qb, Joins::NONE);
             f.push_where(&mut qb);
             qb.push(" AND l.threat_score >= 50 AND l.src_ip IS NOT NULL GROUP BY l.src_ip ORDER BY n DESC LIMIT ");
             qb.push_bind(limit);
@@ -421,6 +434,63 @@ mod tests {
         crate::router(pool, tokio::sync::broadcast::channel(8).0)
     }
 
+
+    /// Jeder Aggregat-Endpunkt mit jedem Filter, der einen Join verlangt.
+    ///
+    /// Die Joins stehen nicht mehr pauschal in jeder Abfrage, sondern nur dort,
+    /// wo Filter oder Ausgabe sie brauchen (`filters::Joins`). Eine vergessene
+    /// Tabelle ist dann kein falsches Ergebnis, sondern ein Syntaxfehler in
+    /// SQL — aber eben erst zur Laufzeit. Also einmal alles durchrufen.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn every_aggregate_survives_a_filter_that_needs_a_join(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO protocols (name) VALUES ('tcp')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO interfaces (name) VALUES ('br0'), ('eth1')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO rules (name, descr) VALUES ('WAN_IN-D', 'Block Bad')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO device_names (name) VALUES ('laptop')").execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, direction_id, rule_action_id, rule_id,
+                 protocol_id, iface_in_id, iface_out_id, hostname_id, src_ip, dst_ip,
+                 dst_port, geo_country, asn_number, asn_name, threat_score)
+             VALUES (NOW(), 1, 1, 2, 1, 1, 1, 2, 1, '1.2.3.4', '10.0.0.5', 443, 'DE', 64512, 'AS Example', 80)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = app(pool);
+        // Ein Filter je Nachschlagetabelle: Schnittstelle, Protokoll, und die
+        // Volltextsuche, die in allen vieren gleichzeitig sucht.
+        let filters = ["iface=br0", "proto=tcp", "q=Block", "q=rule%3ABlock", "q=host%3Alaptop"];
+        let endpoints = [
+            "/api/stats",
+            "/api/stats/series",
+            "/api/stats/ip-pairs",
+            "/api/logs",
+            "/api/logs/count",
+            "/api/export",
+            "/api/threats/points",
+            "/api/flows/sankey",
+            "/api/flows/zones",
+        ];
+        for filter in filters {
+            for endpoint in endpoints {
+                let uri = format!("{endpoint}?{filter}");
+                let res = app
+                    .clone()
+                    .oneshot(Request::get(&uri).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(res.status(), StatusCode::OK, "bei {uri}");
+            }
+            for what in [
+                "countries", "sources", "destinations", "ports", "rules", "interfaces", "asns",
+                "threats",
+            ] {
+                let uri = format!("/api/stats/top?what={what}&{filter}");
+                get_json(&app, &uri).await;
+            }
+        }
+    }
 
     /// Die Paarliste beantwortet "wer spricht mit wem" — dafür muss sie
     /// gleiche Paare wirklich zusammenfassen und erlaubt/blockiert getrennt
@@ -466,6 +536,98 @@ mod tests {
         let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
         let body = get_json(&app, "/api/stats/ip-pairs").await;
         assert_eq!(body["pairs"].as_array().map(|a| a.len()), Some(0));
+    }
+
+    /// Eine Zeile zählt für beide Schnittstellen, die sie nennt. Die Liste
+    /// entsteht jetzt aus einem Durchgang mit zwei Gruppierungsebenen statt
+    /// aus zwei Abfragen — dieselbe Summe muss dabei herauskommen.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn interfaces_count_both_ends_of_a_row(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO interfaces (name) VALUES ('br15'), ('eth1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Zwei Zeilen br15 → eth1, eine davon blockiert; eine Zeile nur mit
+        // Eingang.
+        for action in [1i16, 2] {
+            sqlx::query(
+                "INSERT INTO logs (timestamp, log_type_id, rule_action_id, iface_in_id, iface_out_id, src_ip)
+                 VALUES (NOW(), 1, $1, 1, 2, '10.0.0.5')",
+            )
+            .bind(action)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, rule_action_id, iface_in_id, src_ip)
+             VALUES (NOW(), 1, 1, 1, '10.0.0.6')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let body = get_json(&app(pool), "/api/stats/top?what=interfaces").await;
+        let rows = body["rows"].as_array().unwrap();
+        let find = |name: &str| {
+            rows.iter()
+                .find(|r| r["key"] == name)
+                .unwrap_or_else(|| panic!("{name} fehlt in {body}"))
+                .clone()
+        };
+        assert_eq!(find("br15")["count"], 3, "dreimal als Eingang");
+        assert_eq!(find("eth1")["count"], 2, "zweimal als Ausgang");
+        assert_eq!(find("br15")["extra"]["blocked"], 1);
+        assert_eq!(find("eth1")["extra"]["blocked"], 1);
+    }
+
+    /// Die Summe, die Aufteilung nach Typ und die nach Richtung kommen aus
+    /// einer einzigen Abfrage mit drei Gruppierungsebenen. Verwechselt man die
+    /// Ebenen, zählt jede Zahl etwas anderes, als ihr Name sagt — und es fiele
+    /// niemandem auf, weil alle plausibel aussehen.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn stats_split_the_same_rows_three_ways(pool: sqlx::PgPool) {
+        // Vier Firewall-Zeilen (drei erlaubt eingehend, eine blockiert
+        // ausgehend, eine davon mit hohem Score) und eine DNS-Zeile ohne
+        // Richtung und ohne Aktion.
+        for (action, direction, score) in
+            [(1i16, 1i16, None), (1, 1, None), (1, 1, Some(90)), (2, 2, Some(95))]
+        {
+            sqlx::query(
+                "INSERT INTO logs (timestamp, log_type_id, direction_id, rule_action_id,
+                     src_ip, dst_ip, threat_score)
+                 VALUES (NOW(), 1, $1, $2, '1.2.3.4', '10.0.0.5', $3)",
+            )
+            .bind(direction)
+            .bind(action)
+            .bind(score)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, src_ip, dns_query)
+             VALUES (NOW(), 2, '10.0.0.9', 'example.com')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let stats = get_json(&app(pool), "/api/stats").await;
+        assert_eq!(stats["total"], 5, "alle Zeilen, auch die ohne Aktion");
+        assert_eq!(stats["allowed"], 3);
+        assert_eq!(stats["blocked"], 1);
+        assert_eq!(stats["threats"], 2, "ab Score 50");
+        assert_eq!(stats["unique_sources"], 2);
+        assert_eq!(stats["by_type"]["firewall"], 4);
+        assert_eq!(stats["by_type"]["dns"], 1);
+        assert_eq!(stats["by_direction"]["inbound"], 3);
+        assert_eq!(stats["by_direction"]["outbound"], 1);
+        assert!(
+            stats["by_direction"].as_object().map(|m| m.len()) == Some(2),
+            "die Zeile ohne Richtung bekommt keine eigene: {}",
+            stats["by_direction"]
+        );
     }
 
     #[sqlx::test(migrations = "../../migrations")]
@@ -709,7 +871,7 @@ pub async fn get_ip_pairs(
                 max(l.asn_name) AS asn_name
          FROM logs l ",
     );
-    f.push_joins(&mut qb);
+    f.push_joins(&mut qb, Joins::NONE.protocols());
     qb.push(" LEFT JOIN services sv ON sv.port = l.dst_port AND sv.proto = lower(pr.name) ");
     f.push_where(&mut qb);
     qb.push(
