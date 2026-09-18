@@ -332,26 +332,31 @@ pub async fn get_top(
         }
         Some("interfaces") => {
             // Eine Zeile zählt für ihre Eingangs- *und* ihre Ausgangs-
-            // Schnittstelle. Früher waren das zwei Abfragen mit `UNION ALL`,
-            // also zwei Durchgänge durch dieselben Millionen Zeilen; zwei
-            // Gruppierungsebenen holen beides aus einem. `GROUPING()` trennt
-            // die Ebenen — ohne das wäre die Eingangs-Spalte in den Zeilen der
-            // Ausgangs-Ebene schlicht NULL und nicht davon zu unterscheiden,
-            // dass die Schnittstelle unbekannt ist.
+            // Schnittstelle. Zwei Gruppierungsebenen holen beides aus einem
+            // Durchgang statt aus zwei Abfragen mit `UNION ALL`.
+            //
+            // Gezählt wird über die Kennung, nicht über den Namen: der Name
+            // steht in einer anderen Tabelle, und ihn schon beim Zählen
+            // mitzuschleppen hieße, für jede der Millionen Zeilen zu
+            // verbinden. Die Handvoll Zeilen, die übrig bleibt, bekommt ihn
+            // danach.
             let mut qb = sqlx::QueryBuilder::new(
-                "SELECT name, SUM(n)::bigint AS n, SUM(blocked)::bigint AS blocked FROM (
-                   SELECT CASE WHEN GROUPING(l.iface_in_id) = 0 THEN ii.name ELSE io.name END AS name,
-                          COUNT(*) AS n,
-                          COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked
-                   FROM logs l ",
+                "SELECT n.name AS name, t.n, t.blocked FROM (
+                   SELECT id, SUM(n)::bigint AS n, SUM(blocked)::bigint AS blocked FROM (
+                     SELECT CASE WHEN GROUPING(l.iface_in_id) = 0 THEN l.iface_in_id
+                                 ELSE l.iface_out_id END AS id,
+                            COUNT(*) AS n,
+                            COUNT(*) FILTER (WHERE l.rule_action_id = 2) AS blocked
+                     FROM logs l ",
             );
-            f.push_joins(&mut qb, Joins::NONE.interfaces());
+            f.push_joins(&mut qb, Joins::NONE);
             f.push_where(&mut qb);
             qb.push(
-                " GROUP BY GROUPING SETS ((l.iface_in_id, ii.name), (l.iface_out_id, io.name))
-                 ) t WHERE name IS NOT NULL GROUP BY name ORDER BY n DESC LIMIT ",
+                " GROUP BY GROUPING SETS ((l.iface_in_id), (l.iface_out_id))
+                   ) s WHERE id IS NOT NULL GROUP BY id ORDER BY n DESC LIMIT ",
             );
             qb.push_bind(limit);
+            qb.push(" ) t LEFT JOIN interfaces n ON n.id = t.id ORDER BY t.n DESC");
             qb.build()
                 .fetch_all(&pool)
                 .await?
