@@ -287,7 +287,7 @@ function CategoriesCell(props: { categories: string[] | null }) {
   return (
     <Show when={text()} fallback={<span class="text-gray-500 dark:text-gray-400">—</span>}>
       <span
-        class="cell-wrap-2 text-[11px] leading-[1.35] text-purple-600/70 dark:text-purple-400/70"
+        class="text-[11px] leading-[1.35] text-purple-600/70 dark:text-purple-400/70"
         title={text() ?? undefined}
       >
         {text()}
@@ -363,14 +363,34 @@ const COLUMN_MAX: Record<string, number> = {
   // Überschrift selbst im Auslassungszeichen, und eine Spalte, deren Name
   // nicht dasteht, erklärt ihren Inhalt nicht mehr.
   abuseipdb: 108,
-  // Die breiteste Spalte, aber nicht die einzige: ohne Schranke wuchs sie mit
-  // der längsten Liste der Seite auf über 600 Pixel, und die Tabelle damit auf
-  // das Doppelte der Fensterbreite — zwölf Spalten weit weg von der Zeile, zu
-  // der sie gehören. Über zwei Zeilen steht auch eine lange Liste vollständig
-  // da, und zwar dort, wo man sie liest.
+  // Keine Schranke für die Breite, die gezeichnet wird — nur für die, mit der
+  // die übrigen Spalten rechnen (siehe `roomShare`). Die Kategorienliste steht
+  // vollständig da; dass sie dafür über den rechten Fensterrand hinausragen
+  // darf, kostet nichts, weil rechts von ihr nichts mehr kommt.
   categories: 420,
 };
 const MAX_COLUMN_FALLBACK = 240;
+
+/**
+ * Die letzte Spalte. Sie wird nie gestaucht.
+ *
+ * Alle anderen Spalten teilen sich die Fensterbreite und kürzen ein, was nicht
+ * hineinpasst — sonst schöbe eine lange Liste die Spalten rechts davon aus dem
+ * Bild. Hinter der letzten ist aber nichts mehr, was verschoben werden könnte:
+ * sie darf so breit werden, wie ihr längster Wert es verlangt, und der Behälter
+ * scrollt seitwärts.
+ */
+const FULL_WIDTH_COLUMN = 'categories';
+
+/**
+ * Was eine Spalte vom Fensterplatz mitrechnet.
+ *
+ * Für die letzte Spalte ist das ihre Schranke, nicht ihre wirkliche Breite:
+ * Sonst nähme ihr voller Text den übrigen Spalten den freien Platz weg, den sie
+ * vorher hatten, und die Tabelle sähe links anders aus als vor dieser Änderung.
+ */
+const roomShare = (key: string, px: number) =>
+  key === FULL_WIDTH_COLUMN ? Math.min(px, COLUMN_MAX[key] ?? MAX_COLUMN_FALLBACK) : px;
 
 /**
  * Untergrenzen für Spalten, die auch einmal leer sein können.
@@ -536,8 +556,11 @@ export default function LogsView(props: { query: string }) {
       const heading = heads[key] ?? 0;
       const cap = Math.max(COLUMN_MAX[key] ?? MAX_COLUMN_FALLBACK, heading);
       const min = Math.min(cap, Math.max(COLUMN_MIN[key] ?? MIN_COLUMN, heading));
-      out[key] = Math.min(cap, Math.max(min, w));
-      sum += out[key];
+      out[key] =
+        key === FULL_WIDTH_COLUMN
+          ? Math.max(COLUMN_MIN[key] ?? MIN_COLUMN, heading, w)
+          : Math.min(cap, Math.max(min, w));
+      sum += roomShare(key, out[key]);
     }
 
     const room = tableRef?.parentElement?.clientWidth ?? 0;
@@ -547,7 +570,7 @@ export default function LogsView(props: { query: string }) {
     // Nur wer beschnitten wurde, bekommt etwas ab — und keine Spalte mehr, als
     // ihr Inhalt verlangt. Was danach noch frei ist, bleibt frei: die letzte
     // Spalte auf die Fensterbreite aufzublasen war der Fehler davor.
-    const short = Object.keys(out).filter((k) => want[k] > out[k]);
+    const short = Object.keys(out).filter((k) => k !== FULL_WIDTH_COLUMN && want[k] > out[k]);
     const missing = short.reduce((n, k) => n + want[k] - out[k], 0);
     if (missing <= 0) return out;
     for (const key of short) {
@@ -595,9 +618,10 @@ export default function LogsView(props: { query: string }) {
     const keys = Object.keys(w);
     if (!keys.length) return;
     const room = tableRef.parentElement?.clientWidth ?? 0;
-    const sum = keys.reduce((n, k) => n + (columnWidths()[k] ?? w[k]), 0);
-    const slack = room - sum;
-    if (slack <= 2) return;
+    const sum = keys.reduce((n, k) => n + roomShare(k, columnWidths()[k] ?? w[k]), 0);
+    // Die letzte Spalte wächst auch ohne freien Platz — darum hier kein
+    // frühes Aussteigen mehr, sondern nur eine Verteilmasse, die null sein darf.
+    const slack = Math.max(0, room - sum);
 
     const cols = [...tableRef.querySelectorAll<HTMLElement>('thead th[data-col]')].map(
       (th) => th.dataset.col ?? '',
@@ -624,14 +648,22 @@ export default function LogsView(props: { query: string }) {
       });
     }
 
+    // Was der letzten Spalte fehlt, bekommt sie ganz: sie nimmt es keinem weg.
+    const fullNeed = need[FULL_WIDTH_COLUMN] ?? 0;
+    delete need[FULL_WIDTH_COLUMN];
+
     const wanted = Object.values(need).reduce((n, px) => n + px, 0);
-    if (wanted <= 0) return;
+    if (wanted <= 0 && fullNeed <= 0) return;
     const grown: Record<string, number> = {};
     setMeasured((prev) => {
       const next = { ...prev };
       for (const [key, px] of Object.entries(need)) {
         next[key] = (next[key] ?? 0) + Math.min(px, Math.floor((slack * px) / wanted));
         grown[key] = next[key];
+      }
+      if (fullNeed > 0) {
+        next[FULL_WIDTH_COLUMN] = (next[FULL_WIDTH_COLUMN] ?? 0) + fullNeed;
+        grown[FULL_WIDTH_COLUMN] = next[FULL_WIDTH_COLUMN];
       }
       return next;
     });
