@@ -28,6 +28,30 @@ suite('interfaceName', () => {
     expect(hasInterfaceName('br15')).toBe(true);
   });
 
+  it('nimmt den selbst vergebenen Namen vor den des Controllers', async () => {
+    answerWith({
+      interfaces: {
+        br15: { name: '#1 - VLAN15 - Intern', vlan: 15, purpose: 'corporate', custom: 'Intern' },
+        // Eine Schnittstelle, die der Controller nicht kennt, kann trotzdem
+        // einen eigenen Namen tragen.
+        ppp0: { name: null, vlan: null, purpose: null, custom: 'Glasfaser' },
+      },
+    });
+    await loadInterfaceLabels();
+
+    expect(interfaceName('br15')).toBe('Intern');
+    expect(interfaceName('ppp0')).toBe('Glasfaser');
+    expect(namedNetworkPath('br15', 'ppp0')).toBe('Intern → Glasfaser');
+  });
+
+  it('bleibt bei der rohen Kennung, wenn niemand einen Namen kennt', async () => {
+    answerWith({ interfaces: { tun0: { name: null, vlan: null, purpose: null, custom: null } } });
+    await loadInterfaceLabels();
+
+    expect(interfaceName('tun0')).toBe('tun0');
+    expect(hasInterfaceName('tun0')).toBe(false);
+  });
+
   it('lässt unbekannte Schnittstellen bei ihrem Namen', async () => {
     answerWith({ interfaces: { br15: { name: 'IoT', vlan: 15, purpose: 'corporate' } } });
     await loadInterfaceLabels();

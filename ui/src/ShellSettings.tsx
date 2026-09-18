@@ -1,4 +1,5 @@
 import { createSignal, For, onMount, Show } from 'solid-js';
+import { loadInterfaceLabels, type NetworkInfo } from './interfaceLabels';
 
 /**
  * Die Einstellungen als Überlagerung.
@@ -190,6 +191,29 @@ export default function ShellSettings(props: { onClose: () => void }) {
   const [unifiTest, setUnifiTest] = createSignal<string | null>(null);
 
   const [live, setLive] = createSignal<Live | null>(null);
+  // Die Schnittstellen und die eigenen Namen dafür. Eigener Zustand, weil sie
+  // nicht in `system_config` liegen, sondern in einer eigenen Tabelle: ein
+  // Name je Schnittstelle, kein Schlüssel-Wert-Paar unter vielen.
+  const [ifaces, setIfaces] = createSignal<Record<string, NetworkInfo>>({});
+  const [ifaceDraft, setIfaceDraft] = createSignal<Record<string, string>>({});
+
+  const loadIfaces = async () => {
+    try {
+      const res = await fetch('/api/networks');
+      if (res.ok) {
+        const body = (await res.json()) as { interfaces?: Record<string, NetworkInfo> };
+        setIfaces(body.interfaces ?? {});
+      }
+    } catch {
+      // Ohne Antwort bleibt die Liste leer — dann gibt es hier nichts zu tun.
+    }
+  };
+
+  /** Was im Feld steht: der Entwurf, sonst der gespeicherte eigene Name. */
+  const ifaceValue = (iface: string) => {
+    const d = ifaceDraft();
+    return iface in d ? d[iface] : (ifaces()[iface]?.custom ?? '');
+  };
 
   const loadLive = async () => {
     try {
@@ -203,6 +227,7 @@ export default function ShellSettings(props: { onClose: () => void }) {
   onMount(async () => {
     const res = await fetch('/api/settings');
     if (res.ok) setData((await res.json()) as SettingsData);
+    void loadIfaces();
     void loadLive();
     // Solange der Dialog offen ist, mitlaufen lassen: wer gerade einen
     // Schlüssel einträgt, will sehen, ob die Verbindung danach steht.
@@ -232,6 +257,33 @@ export default function ShellSettings(props: { onClose: () => void }) {
     return parts.length ? parts.join(' · ') : null;
   };
 
+  /**
+   * Die geänderten Namen der Schnittstellen. Leer heißt „zurück zum Namen des
+   * Controllers" — deshalb `null` und nicht der leere Text: der Server
+   * unterscheidet löschen von unverändert.
+   */
+  const saveInterfaceNames = async (): Promise<number> => {
+    const changed = Object.entries(ifaceDraft()).filter(
+      ([iface, value]) => value.trim() !== (ifaces()[iface]?.custom ?? ''),
+    );
+    if (!changed.length) return 0;
+
+    const body: Record<string, string | null> = {};
+    for (const [iface, value] of changed) body[iface] = value.trim() || null;
+    const res = await fetch('/api/networks/names', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return 0;
+    setIfaceDraft({});
+    await loadIfaces();
+    // Damit die Tabelle im Hintergrund sofort den neuen Namen zeigt und nicht
+    // erst beim nächsten Laden der Seite.
+    await loadInterfaceLabels();
+    return changed.length;
+  };
+
   const save = async () => {
     const patch: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(draft())) {
@@ -241,8 +293,11 @@ export default function ShellSettings(props: { onClose: () => void }) {
       if (field.kind === 'secret' && v === '') continue;
       patch[k] = field.kind === 'number' ? Number(v) : v;
     }
+    const names = await saveInterfaceNames();
     if (Object.keys(patch).length === 0) {
-      setStatus('Nothing changed.');
+      setStatus(
+        names ? `Saved ${names} interface name${names === 1 ? '' : 's'}.` : 'Nothing changed.',
+      );
       return;
     }
     const res = await fetch('/api/settings', {
@@ -255,10 +310,11 @@ export default function ShellSettings(props: { onClose: () => void }) {
       return;
     }
     const body = (await res.json()) as { written: string[]; rejected: string[] };
+    const saved = body.written.length + names;
     setStatus(
       body.rejected.length
-        ? `Saved ${body.written.length}, refused: ${body.rejected.join(', ')}`
-        : `Saved ${body.written.length} setting${body.written.length === 1 ? '' : 's'}.`,
+        ? `Saved ${saved}, refused: ${body.rejected.join(', ')}`
+        : `Saved ${saved} setting${saved === 1 ? '' : 's'}.`,
     );
     setDraft({});
     const fresh = await fetch('/api/settings');
@@ -429,6 +485,53 @@ export default function ShellSettings(props: { onClose: () => void }) {
               </section>
             )}
           </For>
+
+          {/* Eigene Namen für die Schnittstellen. Eigener Abschnitt statt eines
+              Eintrags in SECTIONS: die Zeilen stehen nicht fest, sondern
+              kommen aus dem, was der Controller kennt und was je in einer
+              Log-Zeile stand. */}
+          <section>
+            <h3 class="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+              Interfaces
+            </h3>
+            <p class="mt-0.5 text-[11px] text-gray-500">
+              What each interface is called in the table. The controller’s name is the default —
+              fill a field in to override it, empty it to go back.
+            </p>
+            <div class="mt-2 space-y-2">
+              <For
+                each={Object.keys(ifaces()).sort()}
+                fallback={
+                  <p class="text-[11px] text-gray-500">
+                    No interface seen yet. They appear once log rows arrive, or once the controller
+                    is connected.
+                  </p>
+                }
+              >
+                {(iface) => (
+                  <label class="flex items-center gap-3">
+                    <span class="w-40 shrink-0 truncate font-mono text-xs text-gray-700 dark:text-gray-300">
+                      {iface}
+                      <Show when={ifaces()[iface]?.vlan != null}>
+                        <span class="ml-1.5 font-sans text-[10px] text-gray-500">
+                          VLAN {ifaces()[iface]?.vlan}
+                        </span>
+                      </Show>
+                    </span>
+                    <input
+                      type="text"
+                      value={ifaceValue(iface)}
+                      placeholder={ifaces()[iface]?.name ?? iface}
+                      onInput={(e) =>
+                        setIfaceDraft((d) => ({ ...d, [iface]: e.currentTarget.value }))
+                      }
+                      class="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-800 placeholder-gray-400 focus:border-teal-500 focus:outline-none dark:border-gray-700 dark:bg-black dark:text-gray-200 dark:placeholder-gray-600"
+                    />
+                  </label>
+                )}
+              </For>
+            </div>
+          </section>
         </div>
 
         <div class="flex items-center justify-between gap-3 border-t border-gray-200 px-5 py-3 dark:border-gray-800">

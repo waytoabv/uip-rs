@@ -19,6 +19,7 @@ import {
 } from './LogHelpers';
 import LogRowDetail from './LogRowDetail';
 import { namedNetworkPath } from './interfaceLabels';
+import { ruleLabel } from './firewallRules';
 import { applyEnrichment, type Enrichment } from './enrichment';
 
 const PAGE_SIZE = 50;
@@ -121,9 +122,19 @@ async function fetchLogsPage(query: string, before: string | undefined): Promise
 /** Firewall zeigt die Regel, alles andere die jeweils aussagekräftigste Nutzlast. */
 function infoFor(row: LogEntry): string {
   if (row.log_type === 'firewall') {
-    return normalizeRuleDesc(row.rule_desc) ?? row.rule_name ?? '—';
+    // Der Controller zuerst: die Beschreibung in der Log-Zeile ist bei
+    // neunundzwanzig Zeichen abgeschnitten, und den Vorgaberegeln fehlt sie
+    // ganz — dort stünde sonst `LOCAL_WAN-A-2147483647`.
+    return ruleLabel(row.rule_name) ?? normalizeRuleDesc(row.rule_desc) ?? row.rule_name ?? '—';
   }
   return row.dns_query ?? row.hostname ?? row.wifi_event ?? row.dhcp_event ?? rawMessage(row.raw_log) ?? '—';
+}
+
+/** Im Tooltip steht zusätzlich der rohe Regelname — danach sucht, wer die
+ *  Regel im Controller wiederfinden will. */
+function infoTitle(row: LogEntry): string {
+  const text = infoFor(row);
+  return row.rule_name && row.rule_name !== text ? `${text} · ${row.rule_name}` : text;
 }
 
 /** Dienstname für die SERVICE-Spalte: `row.service` (server-seitig aus der
@@ -1068,7 +1079,7 @@ export default function LogsView(props: { query: string }) {
                           <Show when={showCol('rule')}>
                             <td
                               class="px-2 py-1.5 text-[12px] text-gray-600 dark:text-gray-400"
-                              title={infoFor(row)}
+                              title={infoTitle(row)}
                             >
                               {infoFor(row)}
                             </td>

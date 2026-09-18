@@ -7,6 +7,7 @@ import ShellHeader, { type NavTab } from './ShellHeader';
 import ShellSettings from './ShellSettings';
 import ThreatMap from './ThreatMap';
 import { defaultFilters, describe, toQuery, type FilterState } from './filters';
+import { loadFirewallRules } from './firewallRules';
 import { loadInterfaceLabels } from './interfaceLabels';
 
 const THEME_KEY = 'uip-theme';
@@ -68,11 +69,12 @@ export default function App() {
     setFilters((prev) => ({ ...prev, ...patch }));
   };
 
-  // Die Namen der Netze einmal holen. Sie gelten für jede Ansicht, also
-  // gehören sie hierher und nicht in die Tabelle, die sie zufällig zuerst
-  // braucht.
+  // Die Namen der Netze und der Firewall-Regeln einmal holen. Sie gelten für
+  // jede Ansicht, also gehören sie hierher und nicht in die Tabelle, die sie
+  // zufällig zuerst braucht.
   createEffect(() => {
     void loadInterfaceLabels();
+    void loadFirewallRules();
   });
 
   // Setzt `data-theme` nur, wenn eine explizite Wahl getroffen wurde — sonst

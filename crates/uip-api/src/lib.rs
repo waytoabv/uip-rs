@@ -5,6 +5,7 @@ pub mod export;
 pub mod flows;
 pub mod hostdetail;
 pub mod filters;
+pub mod firewall_rules;
 pub mod logs;
 pub mod networks;
 pub mod search;
@@ -39,6 +40,8 @@ pub fn router(pool: PgPool, events: broadcast::Sender<LiveEvent>) -> Router {
         .route("/api/health", get(|| async { "ok" }))
         .route("/api/status", get(status::get_status))
         .route("/api/networks", get(networks::get_networks))
+        .route("/api/networks/names", axum::routing::put(networks::put_names))
+        .route("/api/firewall-rules", get(firewall_rules::get_firewall_rules))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
         .route("/api/settings/pihole/test", get(settings::test_pihole))
         .route("/api/settings/unifi/test", get(settings::test_unifi))

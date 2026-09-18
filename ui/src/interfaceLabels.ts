@@ -11,13 +11,21 @@
  */
 import { createSignal } from 'solid-js';
 
-interface NetworkInfo {
-  name: string;
+export interface NetworkInfo {
+  /** Wie das Netz im Controller heißt — `null` bei allem, was er nicht kennt. */
+  name: string | null;
   vlan: number | null;
   purpose: string | null;
+  /** Der selbst vergebene Name aus den Einstellungen. Er schlägt den Controller. */
+  custom?: string | null;
 }
 
 const [labels, setLabels] = createSignal<Record<string, NetworkInfo>>({});
+
+/** Die ganze Tabelle — für den Einstellungsdialog, der auch die rohen Kennungen braucht. */
+export function interfaceTable(): Record<string, NetworkInfo> {
+  return labels();
+}
 
 /** Holt die Zuordnung. Scheitert sie, bleibt es bei den rohen Namen. */
 export async function loadInterfaceLabels(): Promise<void> {
@@ -41,12 +49,17 @@ export async function loadInterfaceLabels(): Promise<void> {
  */
 export function interfaceName(iface: string | null | undefined): string {
   if (!iface) return '—';
-  return labels()[iface]?.name ?? iface;
+  const info = labels()[iface];
+  // Der selbst vergebene Name zuerst: wer ihn eingetragen hat, hat den des
+  // Controllers gesehen und sich dagegen entschieden.
+  return info?.custom || info?.name || iface;
 }
 
-/** Ob für diese Schnittstelle ein Name aus dem Controller vorliegt. */
+/** Ob für diese Schnittstelle ein Name vorliegt — eigener oder aus dem Controller. */
 export function hasInterfaceName(iface: string | null | undefined): boolean {
-  return !!iface && labels()[iface] != null;
+  if (!iface) return false;
+  const info = labels()[iface];
+  return !!(info?.custom || info?.name);
 }
 
 /**

@@ -12,6 +12,7 @@
 
 use serde_json::Value;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::time::Duration;
 
 const SYNC_EVERY: Duration = Duration::from_secs(300);
@@ -60,9 +61,34 @@ impl Unifi {
         ]
     }
 
+    /// Die Zonen-Firewall spricht die v2-API: andere Pfade, und die Antwort
+    /// ist ein nacktes Array statt `{"data": […]}`.
+    fn v2_urls(&self, path: &str) -> [String; 2] {
+        [
+            format!("{}/proxy/network/v2/api/site/{}/{}", self.base, self.site, path),
+            format!("{}/v2/api/site/{}/{}", self.base, self.site, path),
+        ]
+    }
+
     async fn get(&self, path: &str) -> Result<Vec<Value>, String> {
+        let body = self.fetch(self.urls(path)).await?;
+        Ok(body.get("data").and_then(|d| d.as_array()).cloned().unwrap_or_default())
+    }
+
+    /// Dasselbe über die v2-API. Sie antwortet mit dem Array selbst; das
+    /// `data`-Feld bleibt als Rückfall stehen, weil einzelne Endpunkte es
+    /// weiterhin verwenden.
+    async fn get_v2(&self, path: &str) -> Result<Vec<Value>, String> {
+        let body = self.fetch(self.v2_urls(path)).await?;
+        if let Some(arr) = body.as_array() {
+            return Ok(arr.clone());
+        }
+        Ok(body.get("data").and_then(|d| d.as_array()).cloned().unwrap_or_default())
+    }
+
+    async fn fetch(&self, urls: [String; 2]) -> Result<Value, String> {
         let mut last = String::from("no attempt");
-        for url in self.urls(path) {
+        for url in urls {
             let res = self
                 .http
                 .get(&url)
@@ -77,12 +103,7 @@ impl Unifi {
                     return Err("unauthorized".into());
                 }
                 Ok(r) if r.status().is_success() => {
-                    let body: Value = r.json().await.map_err(|e| e.to_string())?;
-                    return Ok(body
-                        .get("data")
-                        .and_then(|d| d.as_array())
-                        .cloned()
-                        .unwrap_or_default());
+                    return r.json::<Value>().await.map_err(|e| e.to_string());
                 }
                 Ok(r) => last = format!("status {}", r.status()),
                 Err(e) => last = e.to_string(),
@@ -120,6 +141,15 @@ impl Unifi {
             Err(e) => tracing::debug!(error = %e, "could not read the network configuration"),
         }
         store_wan_addresses(pool, &devices).await;
+
+        // Ebenfalls Beiwerk: ein Controller ohne Zonen-Firewall kennt diese
+        // Endpunkte nicht, und dann bleibt es bei dem, was im Log steht.
+        match (self.get_v2("firewall/zone").await, self.get_v2("firewall-policies").await) {
+            (Ok(zones), Ok(policies)) => store_firewall_policies(pool, &zones, &policies).await,
+            (Err(e), _) | (_, Err(e)) => {
+                tracing::debug!(error = %e, "could not read the firewall policies")
+            }
+        }
 
         let mut n_clients = 0;
         // Nach `last_seen` aufsteigend: wer eine Adresse zuletzt hatte, wird
@@ -231,6 +261,113 @@ async fn store_networks(pool: &PgPool, networks: &[Value], devices: &[Value]) {
             .await;
         if let Err(e) = res {
             tracing::warn!(error = %e, "could not prune the network list");
+        }
+    }
+}
+
+/// Das Kürzel, unter dem eine Zone im Regelnamen einer Log-Zeile steht.
+///
+/// Der Regelname ist gebaut, nicht vergeben: `CUSTOM2_CUSTOM1-A-10008` nennt
+/// Quellzone, Zielzone, Aktion und den Index der Regel innerhalb dieses
+/// Zonenpaars. Die Vorgabezonen tragen ihr `zone_key` — drei davon heißen im
+/// Log anders, als sie im Controller heißen. Selbst angelegte Zonen haben kein
+/// `zone_key`; sie werden durchnummeriert, in der Reihenfolge ihrer
+/// Erstellung. Die trägt die Kennung in sich: eine MongoDB-`_id` beginnt mit
+/// dem Zeitstempel, aufsteigend sortiert ergibt sich die Reihenfolge, in der
+/// das Gateway sie zählt.
+fn zone_tokens(zones: &[Value]) -> HashMap<String, (String, String)> {
+    let mut out = HashMap::new();
+    let mut customs: Vec<&Value> = Vec::new();
+
+    for zone in zones {
+        let (Some(id), Some(name)) = (text(zone, "_id"), text(zone, "name")) else {
+            continue;
+        };
+        match text(zone, "zone_key").as_deref() {
+            Some("internal") => drop(out.insert(id, ("LAN".to_string(), name))),
+            Some("external") => drop(out.insert(id, ("WAN".to_string(), name))),
+            Some("gateway") => drop(out.insert(id, ("LOCAL".to_string(), name))),
+            Some(key) => drop(out.insert(id, (key.to_uppercase(), name))),
+            None => customs.push(zone),
+        }
+    }
+
+    customs.sort_by_key(|z| text(z, "_id").unwrap_or_default());
+    for (n, zone) in customs.iter().enumerate() {
+        let (Some(id), Some(name)) = (text(zone, "_id"), text(zone, "name")) else {
+            continue;
+        };
+        out.insert(id, (format!("CUSTOM{}", n + 1), name));
+    }
+    out
+}
+
+/// Der Buchstabe, den die Firewall für diese Aktion in den Regelnamen schreibt.
+fn action_letter(action: &str) -> &'static str {
+    match action.to_ascii_uppercase().as_str() {
+        "ALLOW" | "ACCEPT" => "A",
+        "BLOCK" | "DROP" | "REJECT" => "D",
+        _ => "R",
+    }
+}
+
+/// Der Regelname, wie er in der Log-Zeile stehen wird — oder nichts, wenn die
+/// Regel auf eine Zone zeigt, die es nicht mehr gibt.
+fn policy_key(policy: &Value, tokens: &HashMap<String, (String, String)>) -> Option<String> {
+    let zone = |side: &str| -> Option<&(String, String)> {
+        tokens.get(&text(policy.get(side)?, "zone_id")?)
+    };
+    let src = zone("source")?;
+    let dst = zone("destination")?;
+    let index = number(policy, "index")?;
+    let action = text(policy, "action").unwrap_or_default();
+    Some(format!("{}_{}-{}-{index}", src.0, dst.0, action_letter(&action)))
+}
+
+async fn store_firewall_policies(pool: &PgPool, zones: &[Value], policies: &[Value]) {
+    let tokens = zone_tokens(zones);
+    let mut seen: Vec<String> = Vec::new();
+
+    for policy in policies {
+        let (Some(key), Some(name)) = (policy_key(policy, &tokens), text(policy, "name")) else {
+            continue;
+        };
+        let zone_name = |side: &str| -> Option<String> {
+            let id = text(policy.get(side)?, "zone_id")?;
+            tokens.get(&id).map(|(_, name)| name.clone())
+        };
+        let res = sqlx::query(
+            "INSERT INTO unifi_firewall_policies
+                (rule_key, name, src_zone, dst_zone, predefined, updated_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())
+             ON CONFLICT (rule_key) DO UPDATE SET
+                name = EXCLUDED.name, src_zone = EXCLUDED.src_zone,
+                dst_zone = EXCLUDED.dst_zone, predefined = EXCLUDED.predefined,
+                updated_at = NOW()",
+        )
+        .bind(&key)
+        .bind(&name)
+        .bind(zone_name("source"))
+        .bind(zone_name("destination"))
+        .bind(policy.get("predefined").and_then(|v| v.as_bool()).unwrap_or(false))
+        .execute(pool)
+        .await;
+        match res {
+            Ok(_) => seen.push(key),
+            Err(e) => tracing::warn!(error = %e, key, "could not store the firewall policy"),
+        }
+    }
+
+    // Eine gelöschte Regel soll ihren Namen verlieren — sonst beschriftet sie
+    // weiter Zeilen, die inzwischen eine andere Regel gezogen haben, denn der
+    // Index wird wiederverwendet.
+    if !seen.is_empty() {
+        let res = sqlx::query("DELETE FROM unifi_firewall_policies WHERE rule_key <> ALL($1)")
+            .bind(&seen)
+            .execute(pool)
+            .await;
+        if let Err(e) = res {
+            tracing::warn!(error = %e, "could not prune the firewall policies");
         }
     }
 }
@@ -439,6 +576,113 @@ pub async fn run_unifi(pool: PgPool) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Der Weg über einen wirklichen Controller — nur auf Zuruf, weil er
+    /// Netz und Zugangsdaten braucht:
+    ///
+    /// ```text
+    /// UNIFI_URL=https://10.0.0.1 UNIFI_API_KEY=… \
+    ///   cargo test -p uip-enrich -- --ignored --nocapture live_controller
+    /// ```
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "braucht einen erreichbaren Controller"]
+    async fn live_controller_fills_the_policy_table(pool: PgPool) {
+        let (Ok(url), Ok(key)) = (std::env::var("UNIFI_URL"), std::env::var("UNIFI_API_KEY"))
+        else {
+            panic!("UNIFI_URL und UNIFI_API_KEY setzen");
+        };
+        let site = std::env::var("UNIFI_SITE").unwrap_or_default();
+        let client = Unifi::new(url, key, site);
+
+        let zones = client.get_v2("firewall/zone").await.expect("zones");
+        let policies = client.get_v2("firewall-policies").await.expect("policies");
+        store_firewall_policies(&pool, &zones, &policies).await;
+
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT rule_key, name FROM unifi_firewall_policies ORDER BY rule_key")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        for (key, name) in rows.iter().take(10) {
+            println!("{key} → {name}");
+        }
+        assert_eq!(rows.len(), policies.len(), "jede Regel bekommt genau einen Schlüssel");
+    }
+
+    fn zones() -> Vec<Value> {
+        vec![
+            json!({"_id": "6977a4f61a33a3dda51d6e92", "zone_key": "internal", "name": "Internal"}),
+            json!({"_id": "6977a4f61a33a3dda51d6e93", "zone_key": "external", "name": "External"}),
+            json!({"_id": "6977a4f61a33a3dda51d6e94", "zone_key": "gateway", "name": "Gateway"}),
+            json!({"_id": "6977a4f61a33a3dda51d6e97", "zone_key": "dmz", "name": "Dmz"}),
+            // Selbst angelegt, absichtlich in der falschen Reihenfolge: die
+            // Nummer hängt an der Kennung, nicht an der Stelle in der Liste.
+            json!({"_id": "697cd15e123a22a82ec58c85", "name": "#1 - Internes Netzwerk"}),
+            json!({"_id": "697bc376123a22a82ec5572b", "name": "#0 - Servernetzwerk"}),
+        ]
+    }
+
+    /// Drei Vorgabezonen heißen im Log anders als im Controller, und die
+    /// selbst angelegten heißen dort überhaupt nicht — sie werden gezählt.
+    #[test]
+    fn zones_carry_the_token_the_log_uses() {
+        let tokens = zone_tokens(&zones());
+        let token = |id: &str| tokens.get(id).map(|(t, _)| t.clone()).unwrap();
+        assert_eq!(token("6977a4f61a33a3dda51d6e92"), "LAN");
+        assert_eq!(token("6977a4f61a33a3dda51d6e93"), "WAN");
+        assert_eq!(token("6977a4f61a33a3dda51d6e94"), "LOCAL");
+        assert_eq!(token("6977a4f61a33a3dda51d6e97"), "DMZ");
+        assert_eq!(token("697bc376123a22a82ec5572b"), "CUSTOM1");
+        assert_eq!(token("697cd15e123a22a82ec58c85"), "CUSTOM2");
+    }
+
+    /// Der Regelname der Log-Zeile, aus der Regel selbst gebaut. Die Beispiele
+    /// stammen aus einer laufenden Anlage: `CUSTOM2_CUSTOM1-A-10008` ist dort
+    /// „VL15 -> VL10 - Allow Pihole DNS and WebUI".
+    #[test]
+    fn a_policy_knows_the_rule_name_it_will_log_under() {
+        let tokens = zone_tokens(&zones());
+        let key = |src: &str, dst: &str, action: &str, index: i64| {
+            policy_key(
+                &json!({
+                    "source": {"zone_id": src},
+                    "destination": {"zone_id": dst},
+                    "action": action,
+                    "index": index,
+                }),
+                &tokens,
+            )
+        };
+        assert_eq!(
+            key("697cd15e123a22a82ec58c85", "697bc376123a22a82ec5572b", "ALLOW", 10008).as_deref(),
+            Some("CUSTOM2_CUSTOM1-A-10008")
+        );
+        assert_eq!(
+            key("6977a4f61a33a3dda51d6e97", "6977a4f61a33a3dda51d6e94", "BLOCK", 10002).as_deref(),
+            Some("DMZ_LOCAL-D-10002")
+        );
+        // Die vordefinierte Vorgabe am Ende jeder Kette.
+        assert_eq!(
+            key("6977a4f61a33a3dda51d6e94", "6977a4f61a33a3dda51d6e93", "ALLOW", 2147483647).as_deref(),
+            Some("LOCAL_WAN-A-2147483647")
+        );
+        // Eine Regel auf eine gelöschte Zone lässt sich keiner Zeile zuordnen.
+        assert_eq!(key("weg", "6977a4f61a33a3dda51d6e93", "ALLOW", 10000), None);
+    }
+
+    /// Die Zahl kommt je nach Version als Zahl oder als Zeichenkette — beim
+    /// Index entschiede das sonst über einen Treffer oder keinen.
+    #[test]
+    fn the_index_may_arrive_as_text() {
+        let tokens = zone_tokens(&zones());
+        let p = json!({
+            "source": {"zone_id": "6977a4f61a33a3dda51d6e92"},
+            "destination": {"zone_id": "6977a4f61a33a3dda51d6e94"},
+            "action": "allow",
+            "index": "10000",
+        });
+        assert_eq!(policy_key(&p, &tokens).as_deref(), Some("LAN_LOCAL-A-10000"));
+    }
 
     /// VLAN 15 liegt auf br15, das ungetaggte Vorgabenetz auf br0. Die Regel
     /// steht nirgends in der API — sie ergibt sich daraus, wie das Gateway
