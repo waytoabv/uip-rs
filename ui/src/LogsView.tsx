@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Show, onCleanup } from 'solid-js';
+import { createEffect, createSignal, For, Show, onCleanup, untrack } from 'solid-js';
 import CountryFlag from './CountryFlag';
 import { countryName } from './country';
 import {
@@ -324,6 +324,12 @@ const [columnWidths, setColumnWidths] = createSignal<Record<string, number>>(sto
  * gemessen wird, wenn sich die Daten ändern: Filter, Seite, Refresh.
  */
 const [measured, setMeasured] = createSignal<Record<string, number>>({});
+// Was die Spalten ohne jede Schranke bräuchten. Getrennt gehalten, weil die
+// Verteilung des freien Platzes bei jeder Fensterbreite neu ausfällt, der
+// Inhalt aber derselbe bleibt — beim Ziehen am Fensterrand wird damit nur
+// gerechnet und nicht neu gemessen.
+const [natural, setNatural] = createSignal<Record<string, number>>({});
+const [headings, setHeadings] = createSignal<Record<string, number>>({});
 
 /** Schmaler als das ist unlesbar. */
 const MIN_COLUMN = 48;
@@ -512,20 +518,166 @@ export default function LogsView(props: { query: string }) {
     return Math.ceil(text + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight));
   };
 
+  /**
+   * Aus dem, was die Spalten bräuchten, das, was sie bekommen.
+   *
+   * Zuerst gilt die Schranke — sonst nimmt eine einzige lange Kategorienliste
+   * die halbe Tabelle. Bleibt danach Platz im Fenster, geht er an die Spalten
+   * zurück, die an ihrer Schranke abgeschnitten wurden, und zwar im Verhältnis
+   * dessen, was ihnen fehlt. Vorher stand rechts eine handbreit Schwarz,
+   * während links „MacBook…" und „#1 - VLAN15 - In…" abschnitten: Schranken
+   * allein sagen, wie breit eine Spalte höchstens sein darf, und niemand sagte,
+   * was mit dem Rest geschieht.
+   */
+  const fitColumns = (want: Record<string, number>, heads: Record<string, number>) => {
+    const out: Record<string, number> = {};
+    let sum = 0;
+    for (const [key, w] of Object.entries(want)) {
+      const heading = heads[key] ?? 0;
+      const cap = Math.max(COLUMN_MAX[key] ?? MAX_COLUMN_FALLBACK, heading);
+      const min = Math.min(cap, Math.max(COLUMN_MIN[key] ?? MIN_COLUMN, heading));
+      out[key] = Math.min(cap, Math.max(min, w));
+      sum += out[key];
+    }
+
+    const room = tableRef?.parentElement?.clientWidth ?? 0;
+    let slack = room - sum;
+    if (slack <= 0) return out;
+
+    // Nur wer beschnitten wurde, bekommt etwas ab — und keine Spalte mehr, als
+    // ihr Inhalt verlangt. Was danach noch frei ist, bleibt frei: die letzte
+    // Spalte auf die Fensterbreite aufzublasen war der Fehler davor.
+    const short = Object.keys(out).filter((k) => want[k] > out[k]);
+    const missing = short.reduce((n, k) => n + want[k] - out[k], 0);
+    if (missing <= 0) return out;
+    for (const key of short) {
+      const share = Math.floor((slack * (want[key] - out[key])) / missing);
+      const add = Math.min(share, want[key] - out[key]);
+      out[key] += add;
+    }
+    return out;
+  };
+
   const measureColumns = () => {
     if (!tableRef) return;
-    const next: Record<string, number> = {};
+    const want: Record<string, number> = {};
+    const heads: Record<string, number> = {};
     for (const th of tableRef.querySelectorAll<HTMLElement>('thead th[data-col]')) {
       const key = th.dataset.col;
       if (!key) continue;
+      // Ungebremst gemessen: die Tabelle steht in diesem Augenblick auf
+      // Inhaltsbreite, die Zelle ist also so breit, wie ihr Text es verlangt.
       const w = Math.round(th.getBoundingClientRect().width);
-      const heading = headingWidth(th);
-      const cap = Math.max(COLUMN_MAX[key] ?? MAX_COLUMN_FALLBACK, heading);
-      const min = Math.min(cap, Math.max(COLUMN_MIN[key] ?? MIN_COLUMN, heading));
-      if (w > 0) next[key] = Math.min(cap, Math.max(min, w));
+      if (w > 0) {
+        want[key] = w;
+        heads[key] = headingWidth(th);
+      }
     }
-    if (Object.keys(next).length) setMeasured(next);
+    if (!Object.keys(want).length) return;
+    setNatural(want);
+    setHeadings(heads);
+    setMeasured(fitColumns(want, heads));
   };
+
+  /**
+   * Lässt Spalten in freien Platz nachwachsen, ohne je zu schrumpfen.
+   *
+   * Gemessen wird einmal je Seite, damit die Tabelle unter dem Live-Strom
+   * stillsteht. Der Preis: eine Zeile, die danach hereinkommt, bringt einen
+   * längeren Namen mit, als die Spalte breit ist — und schneidet ab, während
+   * rechts noch eine Handbreit Fenster frei liegt. Also nach jeder Änderung
+   * nachsehen, was überläuft, und nur so viel verteilen, wie ohnehin frei war.
+   * Breiter werden sieht man nicht; schmaler würde man sehen, deshalb nie.
+   */
+  const growIntoSlack = () => {
+    if (!tableRef) return;
+    const w = measured();
+    const keys = Object.keys(w);
+    if (!keys.length) return;
+    const room = tableRef.parentElement?.clientWidth ?? 0;
+    const sum = keys.reduce((n, k) => n + (columnWidths()[k] ?? w[k]), 0);
+    const slack = room - sum;
+    if (slack <= 2) return;
+
+    const cols = [...tableRef.querySelectorAll<HTMLElement>('thead th[data-col]')].map(
+      (th) => th.dataset.col ?? '',
+    );
+    const need: Record<string, number> = {};
+    const fixed = columnWidths();
+    const ask = (key: string, px: number) => {
+      // Von Hand gezogene Spalten bleiben, wie sie gezogen wurden.
+      if (px > 0 && !(key in fixed)) need[key] = Math.max(need[key] ?? 0, Math.ceil(px));
+    };
+    for (const tr of tableRef.querySelectorAll<HTMLElement>('tbody tr.log-row')) {
+      (Array.from(tr.children) as HTMLElement[]).forEach((td, i) => {
+        const key = cols[i];
+        if (!key) return;
+        ask(key, td.scrollWidth - td.clientWidth);
+        for (const el of td.querySelectorAll<HTMLElement>('*')) {
+          ask(key, el.scrollWidth - el.clientWidth);
+          // Zweizeilige Zellen laufen nicht seitwärts über, sie hören auf.
+          // Was fehlt, steckt in den Zeilen, die nicht mehr gezeichnet werden.
+          if (el.clientWidth > 0 && el.clientHeight > 0 && el.scrollHeight - el.clientHeight > 1) {
+            ask(key, el.clientWidth * (el.scrollHeight / el.clientHeight - 1));
+          }
+        }
+      });
+    }
+
+    const wanted = Object.values(need).reduce((n, px) => n + px, 0);
+    if (wanted <= 0) return;
+    const grown: Record<string, number> = {};
+    setMeasured((prev) => {
+      const next = { ...prev };
+      for (const [key, px] of Object.entries(need)) {
+        next[key] = (next[key] ?? 0) + Math.min(px, Math.floor((slack * px) / wanted));
+        grown[key] = next[key];
+      }
+      return next;
+    });
+    // Was hier nachgewachsen ist, ist die wahre Wunschbreite dieser Spalte —
+    // sonst rechnete die nächste Fensteränderung wieder mit dem Stand von
+    // vorhin und nähme es ihr weg.
+    setNatural((prev) => {
+      const next = { ...prev };
+      for (const [key, px] of Object.entries(grown)) next[key] = Math.max(next[key] ?? 0, px);
+      return next;
+    });
+  };
+
+  // Nach jeder Änderung an den Zeilen einmal nachsehen. Im Bild nach dem
+  // Zeichnen, sonst steht dort noch die Seite davor.
+  createEffect(() => {
+    rows();
+    if (!Object.keys(untrack(measured)).length) return;
+    requestAnimationFrame(growIntoSlack);
+  });
+
+  // Ein breiteres Fenster heißt mehr Platz zu verteilen, ein schmaleres
+  // weniger. Gerechnet wird mit den gemerkten Wunschbreiten, gemessen wird
+  // nicht neu — die Tabelle steht dabei ja längst auf festen Breiten.
+  createEffect(() => {
+    let lastRoom = 0;
+    const onResize = () => {
+      const want = natural();
+      if (!Object.keys(want).length) return;
+      const room = tableRef?.parentElement?.clientWidth ?? 0;
+      const next = fitColumns(want, headings());
+      // Beim Aufziehen darf keine Spalte schmaler werden. Platz zu gewinnen
+      // und dabei zu verlieren ist genau das, was man an einer Tabelle sieht.
+      if (room >= lastRoom) {
+        const now = measured();
+        for (const key of Object.keys(next)) next[key] = Math.max(next[key], now[key] ?? 0);
+      }
+      lastRoom = room;
+      setMeasured(next);
+      // Ein breiteres Fenster kann auch das nachholen, was seit dem Messen
+      // hereingekommen ist.
+      requestAnimationFrame(growIntoSlack);
+    };
+    window.addEventListener('resize', onResize);
+    onCleanup(() => window.removeEventListener('resize', onResize));
+  });
 
   // Neue Daten heißen neue Breiten: verwerfen, dann legt der Browser die
   // Tabelle wieder nach Inhalt aus. Gemessen wird nicht hier, sondern im
