@@ -13,6 +13,7 @@ pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
 pub struct LookupCache {
     interfaces: RwLock<HashMap<String, i16>>,
     protocols: RwLock<HashMap<String, i16>>,
+    programs: RwLock<HashMap<String, i16>>,
     device_names: RwLock<HashMap<String, i16>>,
     rules: RwLock<HashMap<(String, String), i16>>,
 }
@@ -39,6 +40,10 @@ impl LookupCache {
         let id: i16 = sqlx::query_scalar(&select).bind(&key).fetch_one(pool).await?;
         map.write().await.insert(key, id);
         Ok(id)
+    }
+
+    pub async fn program_id(&self, pool: &PgPool, name: &str) -> Result<i16, sqlx::Error> {
+        Self::simple_id(&self.programs, pool, "programs", name).await
     }
 
     pub async fn interface_id(&self, pool: &PgPool, name: &str) -> Result<i16, sqlx::Error> {

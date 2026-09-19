@@ -34,6 +34,9 @@ struct Row {
     dns_answer: Option<String>,
     dhcp_event: Option<String>,
     wifi_event: Option<String>,
+    severity: Option<i16>,
+    program_id: Option<i16>,
+    details: Option<serde_json::Value>,
     raw_log: Option<String>,
     live: LiveRow,
 }
@@ -60,10 +63,20 @@ async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row
     if let Some(h) = &p.hostname {
         hostname_id = Some(cache.device_name_id(pool, h).await?);
     }
+    let mut program_id = None;
+    if let Some(prog) = &p.program {
+        program_id = Some(cache.program_id(pool, prog).await?);
+    }
 
     let timestamp = p.timestamp.unwrap_or_else(Utc::now);
-    // System-Logs tragen raw immer (einzige Information); andere nur zur Diagnose nicht nötig → NULL spart Platz.
-    let keep_raw = matches!(log_type, uip_core::types::LogType::System);
+    // System- und WLAN-Zeilen tragen raw: bei beiden steckt die Information
+    // im Text selbst. Bei WLAN war das der Grund, warum in der Tabelle nichts
+    // als eine MAC-Adresse stand — was der Access Point geschrieben hatte,
+    // war schon vor dem Speichern verloren.
+    let keep_raw = matches!(
+        log_type,
+        uip_core::types::LogType::System | uip_core::types::LogType::Wifi
+    );
 
     // Die angereicherten Felder bleiben hier leer und werden erst in `flush`
     // aus dem Adress-Cache gefüllt — dort liegt die ganze Stapel-Menge vor,
@@ -88,6 +101,9 @@ async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row
         dns_answer: p.dns_answer.clone(),
         dhcp_event: p.dhcp_event.clone(),
         wifi_event: p.wifi_event.clone(),
+        severity: p.severity,
+        program: p.program.clone(),
+        details: p.details.clone(),
         raw_log: keep_raw.then(|| p.raw_log.clone()),
         geo_country: None,
         geo_city: None,
@@ -124,6 +140,9 @@ async fn resolve(p: ParsedLog, pool: &PgPool, cache: &LookupCache) -> Result<Row
         dns_answer: p.dns_answer,
         dhcp_event: p.dhcp_event,
         wifi_event: p.wifi_event,
+        severity: p.severity,
+        program_id,
+        details: p.details,
         raw_log: keep_raw.then_some(p.raw_log),
         live,
     })
@@ -236,12 +255,12 @@ async fn flush(
         r#"INSERT INTO logs (timestamp, log_type_id, direction_id, rule_id, rule_action_id,
              protocol_id, iface_in_id, iface_out_id, hostname_id, src_ip, dst_ip,
              src_port, dst_port, mac_address, dns_query, dns_type, dns_answer,
-             dhcp_event, wifi_event, raw_log)
+             dhcp_event, wifi_event, raw_log, severity, program_id, details)
            SELECT * FROM UNNEST(
              $1::timestamptz[], $2::smallint[], $3::smallint[], $4::smallint[], $5::smallint[],
              $6::smallint[], $7::smallint[], $8::smallint[], $9::smallint[], $10::inet[], $11::inet[],
              $12::int[], $13::int[], $14::macaddr[], $15::text[], $16::text[], $17::text[],
-             $18::text[], $19::text[], $20::text[])"#,
+             $18::text[], $19::text[], $20::text[], $21::smallint[], $22::smallint[], $23::jsonb[])"#,
     )
     .bind(col!(timestamp))
     .bind(col!(log_type_id))
@@ -263,6 +282,9 @@ async fn flush(
     .bind(col!(dhcp_event))
     .bind(col!(wifi_event))
     .bind(col!(raw_log))
+    .bind(col!(severity))
+    .bind(col!(program_id))
+    .bind(col!(details))
     .execute(pool)
     .await;
     match res {

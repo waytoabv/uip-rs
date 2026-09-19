@@ -153,6 +153,68 @@ describe('LogsView', () => {
   });
 });
 
+describe('LogsView — Ereigniszeilen', () => {
+  /** Eine WLAN-Verbindung, wie das Gateway sie als CEF-Ereignis schickt. */
+  const WIFI_EVENT: LogEntry = {
+    ...SAMPLE_LOG,
+    id: 2,
+    log_type: 'wifi',
+    rule_action: null,
+    rule_name: null,
+    direction: null,
+    src_ip: '10.10.15.98',
+    dst_ip: null,
+    src_port: null,
+    dst_port: null,
+    protocol: null,
+    wifi_event: 'connected',
+    raw_log: null,
+    geo_country: null,
+    geo_city: null,
+    geo_lat: null,
+    geo_lon: null,
+    asn_number: null,
+    asn_name: null,
+    threat_score: null,
+    threat_categories: null,
+    program: 'unifi',
+    details: {
+      event: 'WiFi Client Connected',
+      msg: 'iPhone Air connected to #1 on U7 Pro. Connection Info: Ch. 37 (6 GHz, 160 MHz), -60 dBm.',
+      wifiName: '#1',
+      connectedToDeviceName: 'U7 Pro',
+      wiFiRssi: '-60',
+    },
+  };
+
+  it('zeigt den Satz des Ereignisses statt einer leeren Spalte', async () => {
+    stubFetch({ ...POPULATED_ROUTES, '/api/logs': { rows: [WIFI_EVENT], next_cursor: null } });
+    stubEventSource();
+    const { findByText } = render(() => <LogsView query="" />);
+    // Früher stand hier nichts als eine MAC-Adresse.
+    await findByText(/iPhone Air connected to #1 on U7 Pro/);
+  });
+
+  it('zeigt den Schweregrad, wo eine System-Zeile keine Aktion hat', async () => {
+    const system: LogEntry = {
+      ...WIFI_EVENT,
+      id: 3,
+      log_type: 'system',
+      wifi_event: null,
+      severity: 4,
+      program: 'mca-ctrl',
+      details: null,
+      raw_log: '<12>Sep 19 08:00:00 Express-7 Express-7 mca-ctrl[123]: etwas ging schief',
+    };
+    stubFetch({ ...POPULATED_ROUTES, '/api/logs': { rows: [system], next_cursor: null } });
+    stubEventSource();
+    const { findByText } = render(() => <LogsView query="" />);
+    await findByText('WARN');
+    // Und das Programm steht in der Spalte, die sonst den Dienst zeigt.
+    await findByText('mca-ctrl');
+  });
+});
+
 describe('Dashboard', () => {
   it('renders the empty state without throwing', async () => {
     stubFetch(EMPTY_ROUTES);

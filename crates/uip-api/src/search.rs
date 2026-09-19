@@ -12,6 +12,12 @@ use std::net::IpAddr;
 pub enum Field {
     SrcIp, DstIp, AnyIp, Port, SrcPort, DstPort, Rule, Country,
     Asn, Protocol, Interface, Host, Action, LogType,
+    /// Das Programm, das die Zeile geschrieben hat (`systemd`, `dnsmasq`).
+    Program,
+    /// Der Schweregrad, als Obergrenze gelesen: `sev:warn` heißt „Warnung
+    /// und alles Dringendere", nicht „genau Warnung". So fragt man ein Log
+    /// ab — man will wissen, was schlimmer ist als eine Schwelle.
+    Severity,
 }
 
 fn field_from_prefix(p: &str) -> Option<Field> {
@@ -30,6 +36,8 @@ fn field_from_prefix(p: &str) -> Option<Field> {
         "host" | "hostname" => Field::Host,
         "action" => Field::Action,
         "type" => Field::LogType,
+        "prog" | "program" => Field::Program,
+        "sev" | "severity" => Field::Severity,
         _ => return None,
     })
 }
@@ -134,7 +142,9 @@ fn typed_for(token: &str, field: Option<Field>) -> Value {
             | Field::Protocol
             | Field::Interface
             | Field::Action
-            | Field::LogType,
+            | Field::LogType
+            | Field::Program
+            | Field::Severity,
         ) => Value::Text(token.to_string()),
 
         // Eine Zahl ist die AS-Nummer, alles andere der Name des Betreibers.

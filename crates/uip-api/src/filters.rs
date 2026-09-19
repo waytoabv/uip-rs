@@ -130,6 +130,9 @@ fn range_start(range: &str) -> Option<DateTime<Utc>> {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Joins {
     pub rules: bool,
+    /// Die Tabelle der Programmnamen — gebraucht von der Zeilenliste und von
+    /// einem Filter auf `prog:`.
+    pub programs: bool,
     pub interfaces: bool,
     pub protocols: bool,
     pub hostnames: bool,
@@ -142,6 +145,7 @@ pub struct Joins {
 impl Joins {
     pub const NONE: Self = Self {
         rules: false,
+        programs: false,
         interfaces: false,
         protocols: false,
         hostnames: false,
@@ -149,6 +153,7 @@ impl Joins {
     };
     pub const ALL: Self = Self {
         rules: true,
+        programs: true,
         interfaces: true,
         protocols: true,
         hostnames: true,
@@ -157,6 +162,10 @@ impl Joins {
 
     pub const fn rules(mut self) -> Self {
         self.rules = true;
+        self
+    }
+    pub const fn programs(mut self) -> Self {
+        self.programs = true;
         self
     }
     pub const fn interfaces(mut self) -> Self {
@@ -175,6 +184,7 @@ impl Joins {
     fn or(self, other: Self) -> Self {
         Self {
             rules: self.rules || other.rules,
+            programs: self.programs || other.programs,
             interfaces: self.interfaces || other.interfaces,
             protocols: self.protocols || other.protocols,
             hostnames: self.hostnames || other.hostnames,
@@ -190,12 +200,16 @@ fn term_joins(term: &Term) -> Joins {
     match (&term.value, term.field) {
         (Value::Text(_), Some(Field::Action) | Some(Field::LogType)) => Joins::NONE,
         (Value::Text(_), Some(Field::Rule)) => Joins::NONE.rules(),
+        (Value::Text(_), Some(Field::Program)) => Joins::NONE.programs(),
+        (Value::Text(_), Some(Field::Severity)) => Joins::NONE,
         (Value::Text(_), Some(Field::Protocol)) => Joins::NONE.protocols(),
         (Value::Text(_), Some(Field::Interface)) => Joins::NONE.interfaces(),
         (Value::Text(_), Some(Field::Host)) => Joins::NONE.hostnames(),
         (Value::Text(_), Some(Field::Country) | Some(Field::Asn)) => Joins::NONE,
         // Ohne Feldangabe wird überall gesucht.
-        (Value::Text(_), None) => Joins::NONE.rules().interfaces().protocols().hostnames(),
+        (Value::Text(_), None) => {
+            Joins::NONE.rules().interfaces().protocols().hostnames().programs()
+        }
         _ => Joins::NONE,
     }
 }
@@ -254,6 +268,9 @@ impl LogFilter {
         let needs = self.needed_joins().or(extra);
         if needs.rules {
             qb.push(" LEFT JOIN rules r ON r.id = l.rule_id ");
+        }
+        if needs.programs {
+            qb.push(" LEFT JOIN programs pg ON pg.id = l.program_id ");
         }
         if needs.interfaces {
             qb.push(
@@ -340,6 +357,27 @@ impl LogFilter {
     }
 }
 
+/// Ein Schweregrad, wie Menschen ihn schreiben: als Zahl oder als Name.
+///
+/// Die Namen sind die von Syslog, dazu die Kurzformen, die jeder tippt.
+fn severity_level(s: &str) -> Option<i16> {
+    let s = s.trim().to_ascii_lowercase();
+    if let Ok(n) = s.parse::<i16>() {
+        return (0..=7).contains(&n).then_some(n);
+    }
+    Some(match s.as_str() {
+        "emerg" | "emergency" | "panic" => 0,
+        "alert" => 1,
+        "crit" | "critical" => 2,
+        "err" | "error" => 3,
+        "warn" | "warning" => 4,
+        "notice" => 5,
+        "info" => 6,
+        "debug" => 7,
+        _ => return None,
+    })
+}
+
 fn push_term(qb: &mut QueryBuilder<'_, Postgres>, term: &Term) {
     // NOT(a OR b) is NULL, not TRUE, once a or b is NULL (e.g. an absent
     // dst_ip on a DNS row) — COALESCE to FALSE first so negation of an
@@ -401,6 +439,12 @@ fn push_term(qb: &mut QueryBuilder<'_, Postgres>, term: &Term) {
                 None => { qb.push("FALSE"); }
             }
         }
+        // Der Schweregrad wird als Schwelle gelesen: kleiner ist dringender,
+        // `sev:warn` liefert also Warnungen, Fehler und Schlimmeres.
+        (Value::Text(t), Some(Field::Severity)) => match severity_level(t) {
+            Some(n) => { qb.push("l.severity <= ").push_bind(n); }
+            None => { qb.push("FALSE"); }
+        },
         (Value::Text(t), field) => {
             // '*' ist das Muster, das Leute tippen; SQL will '%'.
             let pattern = if term.glob { t.replace('*', "%") } else { format!("%{t}%") };
@@ -411,8 +455,9 @@ fn push_term(qb: &mut QueryBuilder<'_, Postgres>, term: &Term) {
                 Some(Field::Protocol) => &["pr.name"],
                 Some(Field::Interface) => &["ii.name", "io.name"],
                 Some(Field::Host) => &["dn.name", "l.rdns"],
+                Some(Field::Program) => &["pg.name"],
                 _ => &[
-                    "r.name", "r.descr", "ii.name", "io.name", "pr.name", "dn.name",
+                    "r.name", "r.descr", "ii.name", "io.name", "pr.name", "dn.name", "pg.name",
                     "l.dns_query", "l.rdns", "l.asn_name", "l.geo_country", "l.geo_city",
                     "l.dhcp_event", "l.wifi_event", "l.raw_log",
                 ],
@@ -469,6 +514,34 @@ mod tests {
         qb.build_query_scalar::<Option<String>>()
             .fetch_all(pool).await.unwrap()
             .into_iter().flatten().collect()
+    }
+
+    /// Der Schweregrad wird als Schwelle gelesen, das Programm als Name —
+    /// beides erst möglich, seit die Zeilen beides überhaupt tragen.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn severity_and_program_are_searchable(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO programs (name) VALUES ('systemd'), ('mca-ctrl')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Eine Warnung von mca-ctrl, eine Info von systemd.
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, severity, program_id, src_ip)
+             VALUES (NOW(), 5, 4, 2, '10.0.0.1'), (NOW(), 5, 6, 1, '10.0.0.2')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let q = |s: &str| LogFilter { q: Some(s.to_string()), ..Default::default() };
+        // „Warnung und dringender" trifft die eine, nicht die andere.
+        assert_eq!(matching(&pool, &q("sev:warn")).await, ["10.0.0.1"]);
+        assert_eq!(matching(&pool, &q("sev:info")).await.len(), 2, "Info schließt Warnungen ein");
+        assert!(matching(&pool, &q("sev:3")).await.is_empty(), "nichts ist ein Fehler");
+        assert_eq!(matching(&pool, &q("prog:mca")).await, ["10.0.0.1"]);
+        assert_eq!(matching(&pool, &q("prog:systemd")).await, ["10.0.0.2"]);
+        // Ein Wort, das kein Schweregrad ist, trifft nichts — statt alles.
+        assert!(matching(&pool, &q("sev:unsinn")).await.is_empty());
     }
 
     #[sqlx::test(migrations = "../../migrations")]

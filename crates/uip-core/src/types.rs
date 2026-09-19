@@ -56,6 +56,14 @@ pub struct ParsedLog {
     pub dns_answer: Option<String>,
     pub dhcp_event: Option<String>,
     pub wifi_event: Option<String>,
+    /// Schweregrad nach Syslog (0 = Notfall … 7 = Debug). Aus dem Kopf der
+    /// Zeile, bei CEF-Ereignissen aus deren eigener Skala umgerechnet.
+    pub severity: Option<i16>,
+    /// Das Programm, das die Zeile geschrieben hat: `systemd`, `dnsmasq`,
+    /// `kernel`.
+    pub program: Option<String>,
+    /// Die Felder strukturierter Ereignisse, so wie sie kamen.
+    pub details: Option<serde_json::Value>,
     pub raw_log: String,
 }
 

@@ -82,6 +82,10 @@ const SEARCH_HELP = [
   '',
   'Scope a term:  src: dst: ip: port: sport: dport:',
   '               rule: host: iface: country: asn: proto: action: type:',
+  '               prog: sev:',
+  '',
+  'sev:warn         that severity and anything worse',
+  'prog:systemd     the program that wrote the line',
 ].join('\n');
 
 const FilterBar: Component<Props> = (props) => {

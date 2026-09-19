@@ -82,6 +82,14 @@ export interface LogEntry {
   dns_answer: string | null;
   dhcp_event: string | null;
   wifi_event: string | null;
+  /** Schweregrad nach Syslog: 0 = Notfall … 7 = Debug. */
+  severity?: number | null;
+  /** Das Programm, das die Zeile geschrieben hat. */
+  program?: string | null;
+  /** Die Felder strukturierter Ereignisse (CEF vom Gateway, Pi-hole-Abfragen,
+   *  stahtd-Meldungen der Access Points). Was darin steht, hängt vom
+   *  Ereignis ab — die Detailzeile zeigt es, wie es kam. */
+  details?: Record<string, unknown> | null;
   raw_log: string | null;
   geo_country: string | null;
   geo_city: string | null;
@@ -120,16 +128,60 @@ async function fetchLogsPage(query: string, before: string | undefined): Promise
   return { rows: body.rows ?? [], next_cursor: body.next_cursor ?? null };
 }
 
+/** Ein Feld aus `details`, sofern es Text ist. */
+function detail(row: LogEntry, key: string): string | null {
+  const v = row.details?.[key];
+  return typeof v === 'string' && v !== '' ? v : typeof v === 'number' ? String(v) : null;
+}
+
 /** Firewall zeigt die Regel, alles andere die jeweils aussagekräftigste Nutzlast. */
 function infoFor(row: LogEntry): string {
-  if (row.log_type === 'firewall') {
-    // Der Controller zuerst: die Beschreibung in der Log-Zeile ist bei
-    // neunundzwanzig Zeichen abgeschnitten, und den Vorgaberegeln fehlt sie
-    // ganz — dort stünde sonst `LOCAL_WAN-A-2147483647`.
-    return ruleLabel(row.rule_name) ?? normalizeRuleDesc(row.rule_desc) ?? row.rule_name ?? '—';
+  // Die Ereignisse des Gateways bringen einen fertigen Satz mit — „iPhone Air
+  // connected to #1 on U7 Pro. Ch. 37 (6 GHz), -60 dBm." sagt mehr, als sich
+  // aus Spalten zusammensetzen ließe.
+  const msg = detail(row, 'msg');
+  if (msg) return msg;
+
+  switch (row.log_type) {
+    case 'firewall':
+      // Der Controller zuerst: die Beschreibung in der Log-Zeile ist bei
+      // neunundzwanzig Zeichen abgeschnitten, und den Vorgaberegeln fehlt sie
+      // ganz — dort stünde sonst `LOCAL_WAN-A-2147483647`.
+      return ruleLabel(row.rule_name) ?? normalizeRuleDesc(row.rule_desc) ?? row.rule_name ?? '—';
+    case 'dns':
+      return row.dns_query ?? '—';
+    case 'dhcp': {
+      const parts = [row.dhcp_event, row.hostname].filter(Boolean);
+      return parts.length ? parts.join(' · ') : (rawMessage(row.raw_log) ?? '—');
+    }
+    case 'wifi': {
+      const where = [detail(row, 'wifiName'), detail(row, 'connectedToDeviceName')].filter(Boolean);
+      const event = row.wifi_event ?? rawMessage(row.raw_log);
+      if (!event) return '—';
+      return where.length ? `${event} · ${where.join(' @ ')}` : event;
+    }
+    default:
+      return rawMessage(row.raw_log) ?? row.hostname ?? '—';
   }
-  return row.dns_query ?? row.hostname ?? row.wifi_event ?? row.dhcp_event ?? rawMessage(row.raw_log) ?? '—';
 }
+
+/**
+ * Die Dringlichkeit einer System-Zeile, als Pille wie Typ und Aktion.
+ *
+ * Syslog zählt von 0 (Notfall) bis 7 (Debug). Zusammengefasst auf das, was
+ * man beim Überfliegen unterscheiden will: was brennt, was schiefging, was
+ * auffiel, und der ganze Rest.
+ */
+const SEVERITY: Array<{ label: string; klass: string }> = [
+  { label: 'EMERG', klass: 'bg-red-500/20 text-red-700 dark:text-red-300 border-red-500/50' },
+  { label: 'ALERT', klass: 'bg-red-500/20 text-red-700 dark:text-red-300 border-red-500/50' },
+  { label: 'CRIT', klass: 'bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/40' },
+  { label: 'ERR', klass: 'bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30' },
+  { label: 'WARN', klass: 'bg-amber-500/10 text-amber-800 dark:text-amber-400 border-amber-500/30' },
+  { label: 'NOTICE', klass: 'bg-gray-500/15 text-gray-600 dark:text-gray-300 border-gray-500/30' },
+  { label: 'INFO', klass: 'bg-gray-500/10 text-gray-500 dark:text-gray-400 border-gray-500/25' },
+  { label: 'DEBUG', klass: 'bg-gray-500/10 text-gray-400 dark:text-gray-500 border-gray-500/20' },
+];
 
 /** Im Tooltip steht zusätzlich der rohe Regelname — danach sucht, wer die
  *  Regel im Controller wiederfinden will. */
@@ -142,6 +194,11 @@ function infoTitle(row: LogEntry): string {
  *  IANA-Tabelle) hat Vorrang, die lokale Portliste ist nur die Rückfallebene
  *  für Zeilen, die dieses Feld (noch) nicht tragen. */
 function serviceFor(row: LogEntry): string {
+  // Ohne Port sagt die Spalte sonst nichts. Das Programm, das die Zeile
+  // geschrieben hat, steht dann dort — bei siebenundzwanzigtausend
+  // System-Zeilen am Tag ist „systemd" gegen „mca-ctrl" die erste Sortierung,
+  // die man vornimmt.
+  if (row.dst_port == null && row.program) return row.program;
   return row.service ?? serviceName(row.dst_port);
 }
 
@@ -188,10 +245,37 @@ function TypePill(props: { type: string | null }) {
   );
 }
 
-function ActionPill(props: { action: string | null; dhcpEvent: string | null; wifiEvent: string | null }) {
+function ActionPill(props: {
+  action: string | null;
+  dhcpEvent: string | null;
+  wifiEvent: string | null;
+  severity?: number | null;
+}) {
   const label = () => props.action ?? props.dhcpEvent ?? props.wifiEvent ?? null;
+  // Hat die Zeile keine Aktion, aber einen Schweregrad, steht der hier: eine
+  // System-Zeile ohne beides sagt in dieser Spalte sonst nichts.
+  const severity = () => {
+    if (label() != null || props.severity == null) return null;
+    return SEVERITY[props.severity] ?? null;
+  };
   return (
-    <Show when={label()} fallback={<span class="text-gray-500 dark:text-gray-400 text-[12px]">—</span>}>
+    <Show
+      when={label()}
+      fallback={
+        <Show
+          when={severity()}
+          fallback={<span class="text-gray-500 dark:text-gray-400 text-[12px]">—</span>}
+        >
+          {(s) => (
+            <span
+              class={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border ${s().klass}`}
+            >
+              {s().label}
+            </span>
+          )}
+        </Show>
+      }
+    >
       <span
         class={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border ${actionPillClass(label())}`}
       >
@@ -1043,7 +1127,12 @@ export default function LogsView(props: { query: string }) {
                             <TypePill type={row.log_type} />
                           </td>
                           <td class="px-2 py-1.5">
-                            <ActionPill action={row.rule_action} dhcpEvent={row.dhcp_event} wifiEvent={row.wifi_event} />
+                            <ActionPill
+                              action={row.rule_action}
+                              dhcpEvent={row.dhcp_event}
+                              wifiEvent={row.wifi_event}
+                              severity={row.severity}
+                            />
                           </td>
                           <td class="px-2 py-1.5">
                             <AddressCell ip={row.src_ip} port={row.src_port} name={addressName(row, 'src')} />

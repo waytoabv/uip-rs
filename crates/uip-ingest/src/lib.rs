@@ -1,3 +1,4 @@
+pub mod cef;
 pub mod collector;
 pub mod firewall;
 pub mod parsers;

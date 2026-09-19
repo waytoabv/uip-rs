@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use sqlx::PgPool;
 use tokio::sync::mpsc;
-use uip_core::types::LogType;
+use uip_core::types::{LogType, RuleAction};
 use uip_core::ParsedLog;
 
 const POLL_EVERY: Duration = Duration::from_secs(30);
@@ -156,7 +156,35 @@ impl Pihole {
     }
 }
 
+/// Ob dieser Status eine Blockade ist.
+///
+/// Pi-hole kennt neunzehn Zustände, neun davon heißen „geblockt": aus der
+/// Gravity-Liste, über einen regulären Ausdruck, über die Sperrliste, jeweils
+/// auch bei der Prüfung von CNAME-Ketten, dazu die Fälle, in denen der
+/// Upstream selbst sperrt. Der Rest ist durchgelassen, aus dem Zwischenspeicher
+/// beantwortet oder weitergeleitet.
+fn blocked(status: &str) -> Option<RuleAction> {
+    let s = status.to_ascii_uppercase();
+    if s.is_empty() || s == "UNKNOWN" {
+        return None;
+    }
+    let is_block = s.starts_with("GRAVITY")
+        || s.starts_with("DENYLIST")
+        || s.starts_with("BLACKLIST")
+        || s.starts_with("REGEX")
+        || s.starts_with("EXTERNAL_BLOCKED")
+        || s == "SPECIAL_DOMAIN"
+        || s == "DBBUSY";
+    Some(if is_block { RuleAction::Block } else { RuleAction::Allow })
+}
+
 /// Eine Pi-hole-Abfrage als DNS-Logzeile.
+///
+/// Die Antwort ist die Antwort, nicht der Status: früher stand in der Spalte
+/// „Antwort" das Wort `GRAVITY`, und wohin die Abfrage ging oder was
+/// zurückkam, ging verloren. Jetzt trägt die Zeile eine Aktion wie jede
+/// Firewall-Zeile — geblockt ist geblockt —, das Ziel ist der befragte
+/// Upstream, und der Grund steht bei den Details.
 pub fn to_log(q: &serde_json::Value) -> Option<ParsedLog> {
     let domain = q.get("domain").and_then(|v| v.as_str())?;
     if domain.is_empty() {
@@ -179,16 +207,50 @@ pub fn to_log(q: &serde_json::Value) -> Option<ParsedLog> {
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
+    let status = q.get("status").and_then(|v| v.as_str()).unwrap_or_default().to_uppercase();
+
+    // Der Upstream steht als „10.10.10.1#53" — die Adresse davor ist das
+    // Ziel, die Zahl dahinter der Port.
+    let upstream = q.get("upstream").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    let (dst_ip, dst_port) = match upstream {
+        Some(u) => {
+            let (host, port) = u.split_once('#').unwrap_or((u, "53"));
+            (host.parse().ok(), port.parse().ok())
+        }
+        None => (None, None),
+    };
+
+    let reply = q.get("reply");
+    let reply_type = reply.and_then(|r| r.get("type")).and_then(|v| v.as_str());
+
+    let mut details = serde_json::Map::new();
+    details.insert("status".into(), serde_json::Value::String(status.clone()));
+    for (key, from) in [("reply_type", "type"), ("reply_time", "time")] {
+        if let Some(v) = reply.and_then(|r| r.get(from)) {
+            details.insert(key.into(), v.clone());
+        }
+    }
+    for key in ["upstream", "dnssec", "cname", "ttl"] {
+        if let Some(v) = q.get(key).filter(|v| !v.is_null()) {
+            details.insert(key.into(), v.clone());
+        }
+    }
+
     Some(ParsedLog {
         timestamp: Some(ts),
         log_type: Some(LogType::Dns),
         dns_query: Some(domain.to_string()),
         dns_type: q.get("type").and_then(|v| v.as_str()).map(|s| s.to_uppercase()),
-        // Der Status sagt, ob geblockt wurde — als Antwort festgehalten, weil
-        // unser Schema für DNS keine Aktion kennt.
-        dns_answer: q.get("status").and_then(|v| v.as_str()).map(|s| s.to_uppercase()),
+        // Was wirklich zurückkam. Bei einer Blockade ist das die Art der
+        // Antwort (NXDOMAIN, NODATA, IP der Sperrseite) — die sagt mehr als
+        // die Wiederholung des Status.
+        dns_answer: reply_type.map(|s| s.to_uppercase()).or_else(|| Some(status.clone())),
+        rule_action: blocked(&status),
         src_ip,
+        dst_ip,
+        dst_port,
         hostname,
+        details: Some(serde_json::Value::Object(details)),
         raw_log: String::new(),
         ..Default::default()
     })
@@ -291,15 +353,55 @@ mod tests {
         let q = serde_json::json!({
             "id": 42, "time": 1_700_000_000.5, "type": "a",
             "domain": "example.com", "status": "GRAVITY",
+            "reply": { "type": "NXDOMAIN", "time": 0.0012 },
             "client": { "ip": "10.0.0.5", "name": "laptop" }
         });
         let row = to_log(&q).unwrap();
         assert_eq!(row.dns_query.as_deref(), Some("example.com"));
         assert_eq!(row.dns_type.as_deref(), Some("A"));
-        assert_eq!(row.dns_answer.as_deref(), Some("GRAVITY"));
+        // Die Antwort ist, was zurückkam — nicht die Wiederholung des Status.
+        assert_eq!(row.dns_answer.as_deref(), Some("NXDOMAIN"));
+        // Geblockt ist geblockt: dieselbe Aktion wie bei einer Firewall-Zeile,
+        // also greifen dieselbe Spalte und dieselben Filter.
+        assert_eq!(row.rule_action, Some(RuleAction::Block));
         assert_eq!(row.src_ip.map(|i| i.to_string()).as_deref(), Some("10.0.0.5"));
         assert_eq!(row.hostname.as_deref(), Some("laptop"));
         assert!(row.timestamp.is_some());
+        let d = row.details.unwrap();
+        assert_eq!(d["status"], "GRAVITY", "der Grund bleibt erhalten");
+        assert_eq!(d["reply_type"], "NXDOMAIN");
+    }
+
+    /// Eine weitergeleitete Abfrage ist erlaubt, und sie ging irgendwohin —
+    /// beides stand vorher nirgends.
+    #[test]
+    fn a_forwarded_query_keeps_its_upstream() {
+        let q = serde_json::json!({
+            "id": 43, "time": 1_700_000_001.0, "type": "aaaa",
+            "domain": "example.org", "status": "FORWARDED",
+            "upstream": "10.10.10.1#53",
+            "reply": { "type": "IP", "time": 0.021 },
+            "client": "10.0.0.6"
+        });
+        let row = to_log(&q).unwrap();
+        assert_eq!(row.rule_action, Some(RuleAction::Allow));
+        assert_eq!(row.dst_ip.map(|i| i.to_string()).as_deref(), Some("10.10.10.1"));
+        assert_eq!(row.dst_port, Some(53));
+        assert_eq!(row.dns_answer.as_deref(), Some("IP"));
+    }
+
+    /// Neun der neunzehn Zustände heißen „geblockt", und sie heißen nicht
+    /// alle gleich.
+    #[test]
+    fn every_blocking_status_counts_as_a_block() {
+        for s in ["GRAVITY", "DENYLIST", "REGEX", "GRAVITY_CNAME", "REGEX_CNAME", "EXTERNAL_BLOCKED_IP", "SPECIAL_DOMAIN"] {
+            assert_eq!(blocked(s), Some(RuleAction::Block), "{s}");
+        }
+        for s in ["FORWARDED", "CACHE", "CACHE_STALE", "RETRIED"] {
+            assert_eq!(blocked(s), Some(RuleAction::Allow), "{s}");
+        }
+        // „noch nicht bekannt" ist keine Entscheidung.
+        assert_eq!(blocked("UNKNOWN"), None);
     }
 
     /// Je nach Pi-hole-Version steht der Client als Objekt oder blank da.

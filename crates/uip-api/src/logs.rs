@@ -41,7 +41,8 @@ pub async fn get_logs(
                 das.name AS src_device, dad.name AS dst_device,
                 r.name AS rule_name, r.descr AS rule_desc,
                 ii.name AS iface_in, io.name AS iface_out,
-                pr.name AS protocol, dn.name AS hostname, sv.name AS service_name
+                pr.name AS protocol, dn.name AS hostname, sv.name AS service_name,
+                l.severity, pg.name AS program, l.details
          FROM logs l ",
     );
     q.filter.push_joins(&mut qb, Joins::ALL);
@@ -99,6 +100,12 @@ pub async fn get_logs(
             "dns_answer": r.get::<Option<String>, _>("dns_answer"),
             "dhcp_event": r.get::<Option<String>, _>("dhcp_event"),
             "wifi_event": r.get::<Option<String>, _>("wifi_event"),
+            "severity": r.get::<Option<i16>, _>("severity"),
+            "program": r.get::<Option<String>, _>("program"),
+            // Die Felder strukturierter Ereignisse, so wie sie kamen — die
+            // Detailzeile zeigt sie, ohne dass hier jedes einzeln benannt
+            // werden muss.
+            "details": r.get::<Option<serde_json::Value>, _>("details"),
             "raw_log": r.get::<Option<String>, _>("raw_log"),
             "geo_country": r.get::<Option<String>, _>("geo_country"),
             "geo_city": r.get::<Option<String>, _>("geo_city"),
@@ -159,6 +166,32 @@ mod tests {
         let body = get_json(&app, "/api/logs?limit=1").await;
         assert_eq!(body["rows"][0]["src_device"].as_str(), Some("Wohnzimmer-TV"));
         assert!(body["rows"][0]["dst_device"].is_null(), "die Gegenstelle kennt der Controller nicht");
+    }
+
+    /// Schweregrad, Programm und die Felder strukturierter Ereignisse — die
+    /// drei Dinge, die eine Zeile ohne Adressen und Ports überhaupt erst
+    /// lesbar machen.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_row_carries_its_severity_program_and_event_fields(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO programs (name) VALUES ('unifi')").execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO logs (timestamp, log_type_id, src_ip, severity, program_id, details, wifi_event)
+             VALUES (NOW(), 4, '10.10.15.98', 6, 1,
+                     '{\"event\": \"WiFi Client Connected\", \"wifiName\": \"#1\", \"wiFiRssi\": \"-60\"}'::jsonb,
+                     'connected')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
+        let body = get_json(&app, "/api/logs?limit=1").await;
+        let row = &body["rows"][0];
+        assert_eq!(row["severity"], 6);
+        assert_eq!(row["program"], "unifi");
+        assert_eq!(row["wifi_event"], "connected");
+        assert_eq!(row["details"]["event"], "WiFi Client Connected");
+        assert_eq!(row["details"]["wiFiRssi"], "-60");
     }
 
     #[sqlx::test(migrations = "../../migrations")]

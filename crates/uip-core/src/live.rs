@@ -29,6 +29,9 @@ pub struct LiveRow {
     pub dns_answer: Option<String>,
     pub dhcp_event: Option<String>,
     pub wifi_event: Option<String>,
+    pub severity: Option<i16>,
+    pub program: Option<String>,
+    pub details: Option<serde_json::Value>,
     pub raw_log: Option<String>,
 
     // Aus dem Adress-Cache, sofern die Gegenstelle bekannt ist.

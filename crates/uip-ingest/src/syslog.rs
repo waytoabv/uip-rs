@@ -5,6 +5,15 @@ pub struct SyslogHeader<'a> {
     pub timestamp: DateTime<Utc>,
     pub host: &'a str,
     pub body: &'a str,
+    /// Die Zahl aus `<30>`: Facility mal acht plus Schweregrad. Fehlt sie,
+    /// sagt die Zeile nichts über ihre Dringlichkeit — das ist etwas anderes
+    /// als „unwichtig", also `None` und nicht 6.
+    pub priority: Option<u8>,
+}
+
+/// Der Schweregrad aus der Priorität: 0 = Notfall, 7 = Debug.
+pub fn severity_of(priority: u8) -> i16 {
+    (priority % 8) as i16
 }
 
 fn month_num(m: &str) -> Option<u32> {
@@ -17,10 +26,12 @@ fn month_num(m: &str) -> Option<u32> {
 
 /// `now` wird injiziert (Tests!); Produktion ruft `parse_header(line, Utc::now())`.
 pub fn parse_header(line: &str, now: DateTime<Utc>) -> Option<SyslogHeader<'_>> {
-    // Priority-Präfix <NN> abstreifen
+    // Priority-Präfix <NN> abstreifen — aber den Wert behalten.
+    let mut priority = None;
     let line = if let Some(rest) = line.strip_prefix('<') {
         let end = rest.find('>')?;
         if !rest[..end].bytes().all(|b| b.is_ascii_digit()) { return None; }
+        priority = rest[..end].parse().ok();
         &rest[end + 1..]
     } else {
         line
@@ -59,7 +70,7 @@ pub fn parse_header(line: &str, now: DateTime<Utc>) -> Option<SyslogHeader<'_>> 
         LocalResult::None => return None, // DST-Lücke
     };
 
-    Some(SyslogHeader { timestamp: ts.with_timezone(&Utc), host, body })
+    Some(SyslogHeader { timestamp: ts.with_timezone(&Utc), host, body, priority })
 }
 
 #[cfg(test)]
@@ -79,9 +90,15 @@ mod tests {
     }
 
     #[test]
-    fn strips_priority_prefix() {
+    fn strips_priority_prefix_but_keeps_the_value() {
         let h = parse_header("<13>Feb  8 16:43:49 UDR kernel: x", now()).unwrap();
         assert_eq!(h.host, "UDR");
+        // 13 = Facility 1 (user), Severity 5 (notice).
+        assert_eq!(h.priority, Some(13));
+        assert_eq!(severity_of(13), 5);
+        // Ohne Präfix ist die Dringlichkeit unbekannt, nicht „normal".
+        let h = parse_header("Feb  8 16:43:49 UDR kernel: x", now()).unwrap();
+        assert_eq!(h.priority, None);
     }
 
     #[test]

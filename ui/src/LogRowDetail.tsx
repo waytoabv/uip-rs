@@ -1,9 +1,27 @@
-import { Show } from 'solid-js';
+import { For, Show } from 'solid-js';
 import CountryFlag from './CountryFlag';
 import { countryName } from './country';
 import { decodeThreatCategories, normalizeRuleDesc, serviceName } from './LogHelpers';
 import { type LogEntry } from './LogsView';
 import { interfaceName } from './interfaceLabels';
+
+/** Aus `wifiChannelWidth` wird „Wifi Channel Width" — lesbar, ohne dass für
+ *  jedes Feld des Herstellers eine Übersetzung gepflegt werden müsste. */
+function humanKey(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
+/** Die Felder eines Ereignisses, ohne die, die schon als Spalte dastehen. */
+function detailEntries(details: Record<string, unknown> | null | undefined): [string, string][] {
+  if (!details) return [];
+  const skip = new Set(['msg', 'event', 'signature', 'host', 'utcTime']);
+  return Object.entries(details)
+    .filter(([k, v]) => !skip.has(k) && v != null && v !== '')
+    .map(([k, v]) => [humanKey(k), typeof v === 'object' ? JSON.stringify(v) : String(v)]);
+}
 
 function Field(props: { label: string; children: unknown }) {
   return (
@@ -90,6 +108,31 @@ export default function LogRowDetail(props: { log: LogEntry }) {
         </Show>
       </Field>
       <Field label="Log ID">{l().id}</Field>
+
+      {/* Was ein strukturiertes Ereignis mitbringt: Access Point, SSID, Kanal
+          und Signalstärke bei einer WLAN-Verbindung; Zieldomain, erkannte
+          Anwendung und Risiko bei einer Blockade; die geänderte Einstellung
+          bei einem Eingriff im Controller. Welche Felder das sind, bestimmt
+          das Ereignis — deshalb als Liste und nicht als feste Spalten. */}
+      <Show when={detailEntries(l().details).length > 0}>
+        <div class="col-span-2 sm:col-span-4">
+          <Field label={(l().details?.event as string) ?? 'Event'}>
+            <Show when={l().details?.msg as string}>
+              <div class="mb-2 text-gray-700 dark:text-gray-200">{l().details?.msg as string}</div>
+            </Show>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-1">
+              <For each={detailEntries(l().details)}>
+                {([key, value]) => (
+                  <div class="min-w-0 text-[11px]">
+                    <span class="text-gray-400">{key}: </span>
+                    <span class="text-gray-600 dark:text-gray-300 break-words">{value}</span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Field>
+        </div>
+      </Show>
 
       <div class="col-span-2 sm:col-span-4">
         <Field label="Raw Log">

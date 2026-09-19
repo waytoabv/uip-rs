@@ -373,6 +373,7 @@ mod tests {
             dst_port: Some(443),
             mac_address: None, hostname: None, dns_query: None, dns_type: None,
             dns_answer: None, dhcp_event: None, wifi_event: None, raw_log: None,
+            severity: None, program: None, details: None,
             geo_country: None, geo_city: None, geo_lat: None, geo_lon: None,
             asn_number: None, asn_name: None, rdns: None, threat_score: None,
             threat_categories: None, abuse_is_tor: None,
