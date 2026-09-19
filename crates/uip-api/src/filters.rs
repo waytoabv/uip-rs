@@ -289,6 +289,33 @@ impl LogFilter {
 
     }
 
+    /// Die ausdrücklich gewählten Log-Arten, deren Zeilen keine Aktion
+    /// tragen — für sie darf die Aktions-Pille nicht gelten.
+    ///
+    /// `None`, wenn keine Art gewählt ist: dann fragt niemand nach einer
+    /// bestimmten Sorte, und „geblockt" soll geblockt heißen.
+    fn actionless_types(&self) -> Option<Vec<i16>> {
+        let chosen: Vec<i16> = ids(&self.log_type, log_type_id)
+            .into_iter()
+            // Firewall-Zeilen tragen immer eine Aktion; für sie gilt die
+            // Pille unverändert, samt „unknown". Bei den übrigen Arten trägt
+            // sie mal eine (eine von Pi-hole geblockte Abfrage) und meistens
+            // keine — und eine Pille, die eine ganze Log-Art verschwinden
+            // lässt, ist eine Falle. Wer gezielt nur die geblockten sehen
+            // will, schreibt `action:block` in die Suche; der Begriff bleibt
+            // streng.
+            .filter(|id| *id != 1)
+            .collect();
+        (!chosen.is_empty()).then_some(chosen)
+    }
+
+    /// Dasselbe für die Richtung: die gibt es nur bei Firewall-Zeilen.
+    fn directionless_types(&self) -> Option<Vec<i16>> {
+        let chosen: Vec<i16> =
+            ids(&self.log_type, log_type_id).into_iter().filter(|id| *id != 1).collect();
+        (!chosen.is_empty()).then_some(chosen)
+    }
+
     pub fn push_where(&self, qb: &mut QueryBuilder<'_, Postgres>) {
         qb.push(" WHERE TRUE");
 
@@ -312,11 +339,27 @@ impl LogFilter {
             if wants_unknown {
                 qb.push("l.rule_action_id IS NULL");
             }
+            // Eine WLAN-Verbindung wird weder erlaubt noch geblockt, eine
+            // DHCP-Anfrage auch nicht. Wer ausdrücklich nach einer solchen
+            // Log-Art fragt, soll sie sehen — sonst bleibt die Liste leer,
+            // und die Pille, die das bewirkt, steht am anderen Ende der
+            // Leiste. Ohne Typ-Auswahl bleibt es streng: „geblockt" heißt
+            // dann geblockt und nicht „alles, was nicht blockbar ist".
+            if let Some(ids) = self.actionless_types() {
+                qb.push(" OR (l.rule_action_id IS NULL AND l.log_type_id = ANY(")
+                  .push_bind(ids)
+                  .push("))");
+            }
             qb.push(")");
         }
         let directions = ids(&self.direction, direction_id);
         if !directions.is_empty() {
-            qb.push(" AND l.direction_id = ANY(").push_bind(directions).push(")");
+            qb.push(" AND (l.direction_id = ANY(").push_bind(directions).push(")");
+            // Dasselbe für die Richtung — die kennt nur die Firewall.
+            if let Some(ids) = self.directionless_types() {
+                qb.push(" OR l.log_type_id = ANY(").push_bind(ids).push(")");
+            }
+            qb.push(")");
         }
         if !self.iface.is_empty() {
             let names: Vec<String> = self.iface.iter().map(|s| s.to_lowercase()).collect();
@@ -561,6 +604,44 @@ mod tests {
 
         let f = LogFilter { direction: vec!["outbound".into()], ..Default::default() };
         assert_eq!(matching(&pool, &f).await, ["10.10.30.7"]);
+    }
+
+    /// Wer nach DNS, DHCP, WLAN oder System fragt, bekommt sie auch — die
+    /// Pillen für Aktion und Richtung beschreiben Firewall-Verkehr, und diese
+    /// Zeilen haben weder das eine noch das andere. Genau das war der Grund,
+    /// warum vier von fünf Log-Arten in der Vorauswahl leer aussahen.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn the_firewall_pills_do_not_empty_the_other_log_kinds(pool: sqlx::PgPool) {
+        seed(&pool).await;
+        // Die Vorauswahl der Oberfläche, nur mit einer anderen Art.
+        let f = LogFilter {
+            log_type: vec!["dns".into()],
+            action: vec!["allow".into(), "block".into()],
+            direction: vec!["inbound".into(), "outbound".into(), "inter_vlan".into()],
+            ..Default::default()
+        };
+        assert_eq!(matching(&pool, &f).await, ["10.10.30.100"]);
+
+        // Ohne gewählte Art bleibt es streng: „geblockt" heißt geblockt.
+        let f = LogFilter { action: vec!["block".into()], ..Default::default() };
+        assert_eq!(matching(&pool, &f).await, ["1.2.3.4"]);
+
+        // Und innerhalb der Firewall gilt die Pille weiter.
+        let f = LogFilter {
+            log_type: vec!["firewall".into()],
+            action: vec!["block".into()],
+            ..Default::default()
+        };
+        assert_eq!(matching(&pool, &f).await, ["1.2.3.4"]);
+
+        // Wer gezielt nur die geblockten DNS-Abfragen sehen will, sagt es in
+        // der Suche — der Begriff bleibt streng, auch bei gewählter Art.
+        let f = LogFilter {
+            log_type: vec!["dns".into()],
+            q: Some("action:block".into()),
+            ..Default::default()
+        };
+        assert!(matching(&pool, &f).await.is_empty(), "die DNS-Zeile war nicht geblockt");
     }
 
     #[sqlx::test(migrations = "../../migrations")]
