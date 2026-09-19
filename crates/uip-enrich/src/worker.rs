@@ -126,6 +126,23 @@ pub async fn release_stale_claims(pool: &PgPool) -> Result<u64, sqlx::Error> {
     Ok(n)
 }
 
+/// Gibt die zurückgestellten Zeilen wieder frei.
+///
+/// Wird genau einmal je Kontingentfenster gerufen, nicht je Durchlauf: das
+/// Zurückstellen ist billig, das Wiederöffnen soll es bleiben. Der partielle
+/// Index `idx_logs_enrich_deferred` macht daraus einen Indexscan über die
+/// wenigen betroffenen Zeilen statt eines Durchlaufs über die Hypertable.
+async fn reopen_deferred(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let res = sqlx::query("UPDATE logs SET enrich_status = 0 WHERE enrich_status = 4")
+        .execute(pool)
+        .await?;
+    let n = res.rows_affected();
+    if n > 0 {
+        tracing::info!(rows = n, "reopened deferred rows for the new quota window");
+    }
+    Ok(n)
+}
+
 /// Claimt bis zu `limit` Zeilen. Das UPDATE committet sofort — die langsame
 /// Arbeit darf keine Transaktion offen halten.
 async fn claim(pool: &PgPool, excluded: &Exclusions, limit: i64) -> Result<Vec<Claimed>, sqlx::Error> {
@@ -427,15 +444,23 @@ async fn write_back(
 
     for c in claimed {
         let f = c.remote.and_then(|ip| facts.get(&ip)).unwrap_or(&empty);
-        // Kontingent alle? Dann bleibt genau diese Zeile in der Queue, damit
-        // der Score nachgereicht werden kann.
-        let pending_again = quota_ran_out
+        // Kontingent alle? Dann wird genau diese Zeile zurückgestellt, damit
+        // der Score nachgereicht werden kann, sobald wieder Kontingent da ist.
+        //
+        // Zurückgestellt (4), nicht offen (0): `claim` nimmt nur offene Zeilen.
+        // Stünde sie wieder auf 0, holte der nächste Durchlauf dieselbe Zeile
+        // sofort erneut, scheiterte am selben Kontingent und schriebe sie
+        // wieder zurück — und weil `run_worker` nur bei einem leeren Ergebnis
+        // schläft, liefe das ohne Pause. In Produktion waren das 1,4
+        // Milliarden Updates auf 10 Millionen eingefügte Zeilen, jedes davon
+        // nicht-HOT und damit ein neuer Eintrag in jedem Index.
+        let deferred = quota_ran_out
             && c.wants_threat
             && c.remote.map(|ip| wants_threat.contains(&ip)).unwrap_or(false)
             && f.threat_score.is_none();
         ts.push(c.timestamp);
         ids.push(c.id);
-        status.push(if pending_again { 0i16 } else { 1i16 });
+        status.push(if deferred { 4i16 } else { 1i16 });
         country.push(f.geo_country.clone());
         city.push(f.geo_city.clone());
         lat.push(f.geo_lat);
@@ -576,6 +601,14 @@ pub async fn run_worker(
     // geschrieben wird nur, wenn sich der Wert ändert: sonst wäre es ein
     // Schreibvorgang je Durchlauf für eine Zahl, die sich selten bewegt.
     let mut last_quota: Option<Quota> = None;
+    // Das Kontingentfenster, für das die zurückgestellten Zeilen schon wieder
+    // geöffnet wurden. `reset_at` ist der Zeitpunkt, zu dem das Kontingent
+    // wieder voll ist — wechselt er, ist ein neues Fenster angebrochen. 0
+    // heißt „unbekannt"; dann wird nicht geöffnet, sonst liefe das UPDATE bei
+    // jedem Durchlauf. Beim Start ist der Merker 0 und damit immer ungleich
+    // einem echten `reset_at`: was ein früherer Lauf zurückgestellt hat, kommt
+    // so auch ohne Fensterwechsel wieder herein.
+    let mut reopened_for: i64 = 0;
     loop {
         // Die Einstellungen können sich jederzeit ändern; sie nur beim Start zu
         // lesen hieße, dass ein im Dialog eingetragener Schlüssel erst nach
@@ -585,6 +618,12 @@ pub async fn run_worker(
             if last_quota != Some(q) {
                 persist_quota(&pool, q).await;
                 last_quota = Some(q);
+            }
+            if q.remaining > 0 && q.reset_at != 0 && q.reset_at != reopened_for {
+                match reopen_deferred(&pool).await {
+                    Ok(_) => reopened_for = q.reset_at,
+                    Err(e) => tracing::warn!(error = %e, "could not reopen deferred rows"),
+                }
             }
         }
         match run_once(&pool, &sources, &excluded, BATCH_SIZE, events.as_ref()).await {
@@ -829,7 +868,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    async fn exhausted_quota_leaves_the_row_pending(pool: sqlx::PgPool) {
+    async fn exhausted_quota_defers_the_row(pool: sqlx::PgPool) {
         insert_row(&pool, 1, Some(1), Some(2), "8.8.8.8").await;
         let (_, s) = sources(ThreatOutcome::QuotaExhausted);
 
@@ -838,8 +877,36 @@ mod tests {
         let (status, country): (i16, Option<String>) =
             sqlx::query_as("SELECT enrich_status, geo_country FROM logs LIMIT 1")
                 .fetch_one(&pool).await.unwrap();
-        assert_eq!(status, 0, "zurück in die Queue, damit der Score nachgereicht wird");
+        assert_eq!(status, 4, "zurückgestellt, damit der Score nachgereicht wird");
         assert_eq!(country.as_deref(), Some("US"), "das Übrige wird trotzdem geschrieben");
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_deferred_row_is_not_claimed_again(pool: sqlx::PgPool) {
+        insert_row(&pool, 1, Some(1), Some(2), "8.8.8.8").await;
+        let (_, s) = sources(ThreatOutcome::QuotaExhausted);
+
+        // Erster Durchlauf stellt zurück, der zweite darf nichts mehr finden —
+        // sonst ist die Schleife wieder da.
+        assert_eq!(run_once(&pool, &s, &Default::default(), 100, None).await.unwrap(), 1);
+        assert_eq!(
+            run_once(&pool, &s, &Default::default(), 100, None).await.unwrap(),
+            0,
+            "eine zurückgestellte Zeile wird nicht erneut geclaimt"
+        );
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_new_quota_window_reopens_deferred_rows(pool: sqlx::PgPool) {
+        insert_row(&pool, 1, Some(1), Some(2), "8.8.8.8").await;
+        let (_, s) = sources(ThreatOutcome::QuotaExhausted);
+        run_once(&pool, &s, &Default::default(), 100, None).await.unwrap();
+
+        assert_eq!(reopen_deferred(&pool).await.unwrap(), 1);
+
+        let status: i16 = sqlx::query_scalar("SELECT enrich_status FROM logs LIMIT 1")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(status, 0, "wieder offen, sobald das Kontingent zurückgesetzt ist");
     }
 
     #[sqlx::test(migrations = "../../migrations")]
