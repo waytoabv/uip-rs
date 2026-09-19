@@ -321,6 +321,15 @@ impl LogFilter {
 
         let types = ids(&self.log_type, log_type_id);
         if !types.is_empty() {
+            // Logisch überflüssig, für den Planner aber der ganze Punkt:
+            // `= ANY($1)` mit gebundenem Array beweist ihm nicht, dass die
+            // Firewall-Zeilen ausgeschlossen sind, und ohne diesen Beweis
+            // bleibt der partielle `idx_logs_type_time_rare` unberührt
+            // liegen. Mit dem Zusatz deckt er genau die seltenen Arten ab,
+            // für die er angelegt wurde.
+            if !types.contains(&1) {
+                qb.push(" AND l.log_type_id <> 1");
+            }
             qb.push(" AND l.log_type_id = ANY(").push_bind(types).push(")");
         }
         // "unknown" ist keine Id, sondern das Fehlen einer: Zeilen ohne
