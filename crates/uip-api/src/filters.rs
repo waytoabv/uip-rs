@@ -133,8 +133,9 @@ pub struct Joins {
     pub interfaces: bool,
     pub protocols: bool,
     pub hostnames: bool,
-    /// Gerätenamen aus dem Controller. Vier Joins über Adressen — nur die
-    /// Zeilenliste zeigt sie, und nur sie sollte dafür zahlen.
+    /// Gerätenamen aus dem Controller. Seit 0008 stehen sie in
+    /// `device_addresses`, und die Zeilenliste hängt sie sich selbst an — hier
+    /// bleibt das Feld, weil ein Filter auf einen Gerätenamen denkbar ist.
     pub devices: bool,
 }
 
@@ -266,14 +267,9 @@ impl LogFilter {
         if needs.hostnames {
             qb.push(" LEFT JOIN device_names dn ON dn.id = l.hostname_id ");
         }
-        if needs.devices {
-            qb.push(
-                " LEFT JOIN unifi_clients ucs ON ucs.ip = l.src_ip \
-                  LEFT JOIN unifi_clients ucd ON ucd.ip = l.dst_ip \
-                  LEFT JOIN unifi_devices uds ON uds.ip = l.src_ip \
-                  LEFT JOIN unifi_devices udd ON udd.ip = l.dst_ip ",
-            );
-        }
+        // `devices` verlangt heute keinen Join mehr: die Zeilenliste verbindet
+        // `device_addresses` selbst, und kein Filter liest daraus.
+
     }
 
     pub fn push_where(&self, qb: &mut QueryBuilder<'_, Postgres>) {

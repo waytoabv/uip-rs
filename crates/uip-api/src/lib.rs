@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod count;
 pub mod dashboard;
+pub mod devices;
 pub mod error;
 pub mod export;
 pub mod flows;
@@ -46,6 +47,7 @@ pub fn router(pool: PgPool, events: broadcast::Sender<LiveEvent>) -> Router {
     Router::new()
         .route("/api/health", get(|| async { "ok" }))
         .route("/api/status", get(status::get_status))
+        .route("/api/devices", get(devices::get_devices))
         .route("/api/networks", get(networks::get_networks))
         .route("/api/networks/names", axum::routing::put(networks::put_names))
         .route("/api/firewall-rules", get(firewall_rules::get_firewall_rules))

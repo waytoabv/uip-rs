@@ -11,7 +11,7 @@
 //! Millionen Zeilen angefasst werden müssen.
 
 use serde_json::Value;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -136,10 +136,16 @@ impl Unifi {
         // Die Netz-Konfiguration ist die Nebensache, nicht der Zweck des
         // Abgleichs: fehlt sie, bleiben die Schnittstellen eben bei ihren
         // rohen Namen, statt dass der ganze Durchlauf scheitert.
-        match self.get("rest/networkconf").await {
-            Ok(networks) => store_networks(pool, &networks, &devices).await,
-            Err(e) => tracing::debug!(error = %e, "could not read the network configuration"),
-        }
+        let networks = match self.get("rest/networkconf").await {
+            Ok(networks) => {
+                store_networks(pool, &networks, &devices).await;
+                networks
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "could not read the network configuration");
+                Vec::new()
+            }
+        };
         store_wan_addresses(pool, &devices).await;
 
         // Ebenfalls Beiwerk: ein Controller ohne Zonen-Firewall kennt diese
@@ -168,6 +174,8 @@ impl Unifi {
                 n_devices += 1;
             }
         }
+
+        store_device_addresses(pool, &devices, &networks).await;
         Ok((n_clients, n_devices))
     }
 }
@@ -428,6 +436,106 @@ async fn upsert_network(pool: &PgPool, iface: &str, name: &str, vlan: Option<i32
     }
 }
 
+/// Die Adresse, unter der das Gateway in einem Netz erreichbar ist.
+///
+/// `ip_subnet` ist die Netzangabe mitsamt der eigenen Adresse darin —
+/// „10.10.15.1/24" heißt: das Gateway ist die .1. Unter `stat/device` steht
+/// von ihm nur die WAN-Adresse; in den Log-Zeilen taucht es aber unter seiner
+/// Adresse im jeweiligen VLAN auf, und die stand bisher nirgends.
+fn gateway_ip(net: &Value) -> Option<String> {
+    let purpose = text(net, "purpose").unwrap_or_default();
+    if !matches!(purpose.as_str(), "corporate" | "guest" | "vlan-only" | "remote-user-vpn") {
+        return None;
+    }
+    let subnet = text(net, "ip_subnet")?;
+    let addr = subnet.split('/').next()?.trim();
+    addr.parse::<std::net::IpAddr>().ok().map(|ip| ip.to_string())
+}
+
+/// Der Name des Gateways, wie ihn der Controller führt.
+fn gateway_name(devices: &[Value]) -> Option<String> {
+    devices
+        .iter()
+        .find(|d| matches!(text(d, "type").as_deref(), Some("udm") | Some("ugw")))
+        .and_then(display_name)
+}
+
+/// Baut die Zuordnung Adresse → Gerätename neu auf.
+///
+/// Absichtlich vollständig neu und nicht fortgeschrieben: die Tabelle ist
+/// klein, und ein Gerät, das seine Adresse abgegeben hat, soll seinen Namen
+/// dort nicht behalten. Geschrieben wird in der Rangfolge Client, Gateway,
+/// Gerät — das Letzte gewinnt, und ein Gerät des Controllers weiß besser, wer
+/// es ist, als ein DHCP-Eintrag derselben Adresse.
+async fn store_device_addresses(pool: &PgPool, devices: &[Value], networks: &[Value]) {
+    let mut entries: Vec<(String, String, &str)> = Vec::new();
+
+    let clients = sqlx::query("SELECT host(ip) AS ip, COALESCE(name, hostname, oui) AS name FROM unifi_clients WHERE ip IS NOT NULL")
+        .fetch_all(pool)
+        .await;
+    match clients {
+        Ok(rows) => {
+            for r in &rows {
+                let (Some(ip), Some(name)) =
+                    (r.get::<Option<String>, _>("ip"), r.get::<Option<String>, _>("name"))
+                else {
+                    continue;
+                };
+                entries.push((ip, name, "client"));
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the client addresses");
+            return;
+        }
+    }
+
+    if let Some(name) = gateway_name(devices) {
+        for net in networks {
+            if let Some(ip) = gateway_ip(net) {
+                entries.push((ip, name.clone(), "gateway"));
+            }
+        }
+    }
+
+    for d in devices {
+        if let (Some(ip), Some(name)) = (text(d, "ip"), display_name(d)) {
+            entries.push((ip, name, "device"));
+        }
+    }
+
+    if entries.is_empty() {
+        return;
+    }
+
+    let mut seen: Vec<String> = Vec::new();
+    for (ip, name, kind) in &entries {
+        let res = sqlx::query(
+            "INSERT INTO device_addresses (ip, name, kind, updated_at)
+             VALUES ($1::text::inet, $2, $3, NOW())
+             ON CONFLICT (ip) DO UPDATE SET
+                name = EXCLUDED.name, kind = EXCLUDED.kind, updated_at = NOW()",
+        )
+        .bind(ip)
+        .bind(name)
+        .bind(kind)
+        .execute(pool)
+        .await;
+        match res {
+            Ok(_) => seen.push(ip.clone()),
+            Err(e) => tracing::debug!(error = %e, ip, "could not store the device address"),
+        }
+    }
+
+    let res = sqlx::query("DELETE FROM device_addresses WHERE host(ip) <> ALL($1)")
+        .bind(&seen)
+        .execute(pool)
+        .await;
+    if let Err(e) = res {
+        tracing::warn!(error = %e, "could not prune the device addresses");
+    }
+}
+
 fn text(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(|x| x.as_str()).filter(|s| !s.is_empty()).map(str::to_string)
 }
@@ -607,6 +715,64 @@ mod tests {
             println!("{key} → {name}");
         }
         assert_eq!(rows.len(), policies.len(), "jede Regel bekommt genau einen Schlüssel");
+    }
+
+    /// Die Tabelle, aus der beide Wege ihre Gerätenamen nehmen: die
+    /// Zeilenliste beim Lesen, der Live-Strom über `/api/devices`.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn device_addresses_gather_every_name_there_is(pool: PgPool) {
+        // Ein Client mit eigenem Namen, einer nur mit gemeldetem Hostnamen.
+        sqlx::query(
+            "INSERT INTO unifi_clients (mac, ip, name, hostname) VALUES
+             ('11:22:33:44:55:66'::macaddr, '10.10.15.56'::inet, 'MacBook Pro', 'macbook'),
+             ('11:22:33:44:55:77'::macaddr, '10.10.15.93'::inet, NULL, 'HP1234')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let devices = vec![
+            json!({"type": "udm", "name": "Express 7", "ip": "31.16.242.153"}),
+            json!({"type": "uap", "name": "U7 Pro", "ip": "10.10.0.2"}),
+        ];
+        let networks = vec![
+            json!({"purpose": "corporate", "name": "#1 - VLAN15 - Intern", "ip_subnet": "10.10.15.1/24"}),
+            json!({"purpose": "wan", "name": "WAN"}),
+        ];
+        store_device_addresses(&pool, &devices, &networks).await;
+
+        let rows: Vec<(String, String, String)> =
+            sqlx::query_as("SELECT host(ip), name, kind FROM device_addresses ORDER BY ip")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let name_of = |ip: &str| {
+            rows.iter().find(|(a, _, _)| a == ip).map(|(_, n, _)| n.clone())
+        };
+
+        assert_eq!(name_of("10.10.15.56").as_deref(), Some("MacBook Pro"));
+        // Der selbst vergebene Name fehlt — dann der gemeldete.
+        assert_eq!(name_of("10.10.15.93").as_deref(), Some("HP1234"));
+        assert_eq!(name_of("10.10.0.2").as_deref(), Some("U7 Pro"));
+        // Das Gateway meldet nur seine WAN-Adresse; unter welcher Adresse es
+        // im VLAN steht, weiß nur die Netz-Konfiguration.
+        assert_eq!(name_of("10.10.15.1").as_deref(), Some("Express 7"));
+        assert_eq!(name_of("31.16.242.153").as_deref(), Some("Express 7"));
+        // Das WAN hat keine Gateway-Adresse in diesem Sinn.
+        assert_eq!(rows.len(), 5, "{rows:?}");
+
+        // Ein Gerät, das seine Adresse abgegeben hat, behält seinen Namen
+        // dort nicht: die Tabelle wird bei jedem Abgleich neu gebaut.
+        sqlx::query("DELETE FROM unifi_clients WHERE ip = '10.10.15.93'::inet")
+            .execute(&pool)
+            .await
+            .unwrap();
+        store_device_addresses(&pool, &devices, &networks).await;
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM device_addresses")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 4);
     }
 
     fn zones() -> Vec<Value> {

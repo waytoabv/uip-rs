@@ -38,14 +38,20 @@ pub async fn get_logs(
                 l.geo_country, l.geo_city, l.geo_lat::float8 AS geo_lat,
                 l.geo_lon::float8 AS geo_lon, l.asn_number, l.asn_name,
                 l.rdns, l.threat_score, l.threat_categories, l.abuse_is_tor,
-                COALESCE(ucs.name, ucs.hostname, uds.name) AS src_device,
-                COALESCE(ucd.name, ucd.hostname, udd.name) AS dst_device,
+                das.name AS src_device, dad.name AS dst_device,
                 r.name AS rule_name, r.descr AS rule_desc,
                 ii.name AS iface_in, io.name AS iface_out,
                 pr.name AS protocol, dn.name AS hostname, sv.name AS service_name
          FROM logs l ",
     );
     q.filter.push_joins(&mut qb, Joins::ALL);
+    // Die Gerätenamen stehen seit 0008 in einer eigenen Tabelle, aus der auch
+    // der Live-Strom sie bekommt (`/api/devices`) — vorher löste die
+    // Zeilenliste über vier Joins auf und der Strom gar nicht.
+    qb.push(
+        " LEFT JOIN device_addresses das ON das.ip = l.src_ip \
+          LEFT JOIN device_addresses dad ON dad.ip = l.dst_ip ",
+    );
     // Not part of LogFilter::push_joins: only this endpoint's output needs
     // the service name, and export.rs/dashboard.rs etc. share push_joins.
     qb.push(" LEFT JOIN services sv ON sv.port = l.dst_port AND sv.proto = lower(pr.name) ");
@@ -143,30 +149,16 @@ mod tests {
              VALUES (NOW(), 1, '10.0.20.196', '1.1.1.1', 443)",
         ).execute(&pool).await.unwrap();
 
-        // Erst danach lernt der Controller das Gerät kennen.
+        // Erst danach lernt der Controller das Gerät kennen. Aufgelöst wird
+        // beim Lesen, also gilt der Name auch für diese Zeile.
         sqlx::query(
-            "INSERT INTO unifi_clients (mac, ip, name) VALUES ('aa:bb:cc:dd:ee:ff', '10.0.20.196', 'Wohnzimmer-TV')",
+            "INSERT INTO device_addresses (ip, name, kind) VALUES ('10.0.20.196', 'Wohnzimmer-TV', 'client')",
         ).execute(&pool).await.unwrap();
 
         let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
         let body = get_json(&app, "/api/logs?limit=1").await;
         assert_eq!(body["rows"][0]["src_device"].as_str(), Some("Wohnzimmer-TV"));
         assert!(body["rows"][0]["dst_device"].is_null(), "die Gegenstelle kennt der Controller nicht");
-    }
-
-    /// Ein selbst vergebener Name schlägt den gemeldeten Hostnamen — sonst
-    /// überschreibt das Gerät die Entscheidung des Menschen.
-    #[sqlx::test(migrations = "../../migrations")]
-    async fn a_chosen_name_beats_the_reported_hostname(pool: sqlx::PgPool) {
-        sqlx::query("INSERT INTO logs (timestamp, log_type_id, src_ip) VALUES (NOW(), 1, '10.0.0.7')")
-            .execute(&pool).await.unwrap();
-        sqlx::query(
-            "INSERT INTO unifi_clients (mac, ip, name, hostname) VALUES ('11:22:33:44:55:66', '10.0.0.7', 'Drucker', 'HP1234')",
-        ).execute(&pool).await.unwrap();
-
-        let app = crate::router(pool, tokio::sync::broadcast::channel(8).0);
-        let body = get_json(&app, "/api/logs?limit=1").await;
-        assert_eq!(body["rows"][0]["src_device"].as_str(), Some("Drucker"));
     }
 
     #[sqlx::test(migrations = "../../migrations")]

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, Match, Show, Switch } from 'solid-js';
+import { createEffect, createMemo, createSignal, Match, onCleanup, Show, Switch } from 'solid-js';
 import Dashboard from './Dashboard';
 import FilterBar from './FilterBar';
 import FlowView from './FlowView';
@@ -7,6 +7,7 @@ import ShellHeader, { type NavTab } from './ShellHeader';
 import ShellSettings from './ShellSettings';
 import ThreatMap from './ThreatMap';
 import { defaultFilters, describe, toQuery, type FilterState } from './filters';
+import { DEVICE_REFRESH_MS, loadDeviceNames } from './deviceNames';
 import { loadFirewallRules } from './firewallRules';
 import { loadInterfaceLabels } from './interfaceLabels';
 
@@ -75,6 +76,13 @@ export default function App() {
   createEffect(() => {
     void loadInterfaceLabels();
     void loadFirewallRules();
+    void loadDeviceNames();
+    // Die Gerätenamen ändern sich im Betrieb — ein neues Gerät im Netz soll
+    // nicht bis zum nächsten Neuladen der Seite namenlos bleiben. Der Abgleich
+    // mit dem Controller läuft alle fünf Minuten, öfter nachzusehen brächte
+    // nichts.
+    const timer = window.setInterval(() => void loadDeviceNames(), DEVICE_REFRESH_MS);
+    onCleanup(() => window.clearInterval(timer));
   });
 
   // Setzt `data-theme` nur, wenn eine explizite Wahl getroffen wurde — sonst

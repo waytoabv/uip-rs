@@ -20,6 +20,7 @@ import {
 import LogRowDetail from './LogRowDetail';
 import { namedNetworkPath } from './interfaceLabels';
 import { ruleLabel } from './firewallRules';
+import { deviceName } from './deviceNames';
 import { applyEnrichment, type Enrichment } from './enrichment';
 
 const PAGE_SIZE = 50;
@@ -151,6 +152,11 @@ function addressName(row: LogEntry, side: 'src' | 'dst'): string | null {
   // für die eigene Seite, rDNS für die Gegenstelle.
   const fromController = side === 'src' ? row.src_device : row.dst_device;
   if (fromController) return fromController;
+  // Zeilen aus dem Live-Strom tragen das Feld nicht: sie werden weitergereicht,
+  // sobald sie geschrieben sind, ohne den Umweg über die Auflösung beim Lesen.
+  // Für sie gilt dieselbe Tabelle, nur hier nachgeschlagen.
+  const fromTable = deviceName(side === 'src' ? row.src_ip : row.dst_ip);
+  if (fromTable) return fromTable;
   const local = localSide(row.direction, row.src_ip, row.dst_ip);
   return side === local ? row.hostname : row.rdns;
 }
